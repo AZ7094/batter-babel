@@ -54,6 +54,7 @@ pub fn get_progress() -> Value {
 
 const VALID_ACTIONS: &[&str] = &[
     "scan",
+    "scan-force",
     "status",
     "probe",
     "cf-optimize",

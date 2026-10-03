@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 # Every action this script understands. Anything else is refused up front with a readable message
 # (instead of silently doing nothing and leaving the caller without a result file).
 $KnownActions = @(
-    'scan', 'status', 'probe',
+    'scan', 'scan-force', 'status', 'probe',
     'cf-optimize', 'cf-apply', 'cf-restore',
     'optimize', 'restore', 'reapply-boost',
     'tune-system', 'restore-tune',
@@ -578,13 +578,20 @@ function Get-GameTargets($Game) {
 # lives in memory only, so a rule created before the last boot is gone. Windows Home editions have
 # no Group Policy store (every Local call fails with System Error 53), so their rules always land in
 # ActiveStore and always need re-applying after a restart.
+# Resolved once per run: the WMI query is not free, and Test-GameBoosted calls this for every game.
+$script:BootTimeResolved = $false
+$script:BootTimeValue = $null
+
 function Get-BootTimeStamp {
+    if ($script:BootTimeResolved) { return $script:BootTimeValue }
+    $script:BootTimeResolved = $true
     try {
         $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-        return ([datetime]$os.LastBootUpTime).ToString('o')
+        $script:BootTimeValue = ([datetime]$os.LastBootUpTime).ToString('o')
     } catch {
-        return $null
+        $script:BootTimeValue = $null
     }
+    return $script:BootTimeValue
 }
 
 # --- Keeping ActiveStore rules alive across reboots ----------------------------------------------
@@ -632,6 +639,46 @@ function Test-HasActiveStoreBoost {
         if ($item.store -eq 'ActiveStore') { return $true }
     }
     return $false
+}
+
+# --- Scan cache -----------------------------------------------------------------------------------
+# A full scan costs about a second: it walks every Steam library manifest and runs the appinfo.vdf
+# category pass for each installed app. Repeating that on every launch is wasted work, so the result
+# is cached and reused for 24 hours. The UI's "detect games" button calls scan-force to refresh it.
+# Boost state is deliberately NOT taken from the cache -- it can change at any time -- and is
+# recomputed on every read.
+function Get-GameCachePath {
+    $dir = Join-Path $env:LOCALAPPDATA 'BatterBabel'
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    return Join-Path $dir 'games-cache.json'
+}
+
+function Read-GameCache([int]$MaxAgeHours = 24) {
+    $path = Get-GameCachePath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+        if (-not $text.Trim()) { return $null }
+        $data = $text | ConvertFrom-Json
+        if (-not $data.savedAt -or -not $data.games) { return $null }
+        $age = (Get-Date) - [datetime]$data.savedAt
+        if ($age.TotalHours -gt $MaxAgeHours) { return $null }
+        return $data
+    } catch {
+        return $null
+    }
+}
+
+function Write-GameCache($Games, $Qos) {
+    $path = Get-GameCachePath
+    $payload = [ordered]@{
+        savedAt = (Get-Date).ToString('o')
+        games = @($Games)
+        qos = $Qos
+    }
+    try {
+        [System.IO.File]::WriteAllText($path, ($payload | ConvertTo-Json -Depth 8 -Compress), [System.Text.UTF8Encoding]::new($false))
+    } catch {}
 }
 
 # Probes what the QoS boost can actually do on THIS machine, without needing admin, so the UI can
@@ -1612,11 +1659,39 @@ if ($Action -eq 'cf-optimize') {
 # Resolve-Ip helpers they use) stays available for future work. They are safe to ignore.
 # ===============================================================================================
 
-if ($Action -eq 'scan') {
+if ($Action -eq 'scan' -or $Action -eq 'scan-force') {
+    # Scanning costs about a second (Steam libraries + the appinfo.vdf category pass), which is
+    # pointless to repeat on every launch. The result is cached and reused for 24 hours; the UI's
+    # "detect games" button calls scan-force to bypass the cache. Anything that can change on its own --
+    # the boost state -- is recomputed on every read instead of being taken from the cache.
+    $useCache = ($Action -eq 'scan')
+    if ($useCache) {
+        $cached = Read-GameCache
+        if ($cached) {
+            $cachedGames = @($cached.games)
+            foreach ($cg in $cachedGames) {
+                if ($cg.id) { $cg.accelerated = Test-GameBoosted $cg.id }
+            }
+            Write-Result @{
+                ok = $true
+                games = $cachedGames
+                qos = $cached.qos
+                cached = $true
+                scannedAt = $cached.savedAt
+                protectedRoute = 'Local Windows QoS only. No proxy nodes, hosts changes, or DNS takeover.'
+            }
+            exit 0
+        }
+    }
+    $freshGames = @(Get-OnlineGameList)
+    $freshQos = Get-QosCapability
+    Write-GameCache $freshGames $freshQos
     Write-Result @{
         ok = $true
-        games = @(Get-OnlineGameList)
-        qos = Get-QosCapability
+        games = $freshGames
+        qos = $freshQos
+        cached = $false
+        scannedAt = (Get-Date).ToString('o')
         protectedRoute = 'Local Windows QoS only. No proxy nodes, hosts changes, or DNS takeover.'
     }
     exit 0

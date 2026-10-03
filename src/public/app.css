@@ -58,6 +58,9 @@ button.secondary.active:hover { background: #388049; border-color: #5cc075; }
 button.ghost { background: #eef0f2; color: #12171c; border-color: #eef0f2; }
 button.ghost:hover { background: #ffffff; border-color: #ffffff; }
 button.ghost:disabled { background: #6a7076; border-color: #6a7076; color: #1a1f24; }
+/* 「检测游戏」：比主操作按钮矮一档，因为它是低频的刷新动作 */
+button.icon { padding: 6px 10px; font-size: 12px; font-weight: 500; color: var(--muted); }
+button.icon:hover:not(:disabled) { color: var(--ink); }
 .tune-actions { margin-left: auto; display: flex; gap: 8px; }
 
 /* 进度 */

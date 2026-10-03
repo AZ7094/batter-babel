@@ -6,6 +6,7 @@ const optimizeBtn = document.querySelector('#optimize');
 const writeBtn = document.querySelector('#write-hosts');
 const restoreBtn = document.querySelector('#restore-hosts');
 const boostBtn = document.querySelector('#boost-game');
+const rescanBtn = document.querySelector('#rescan');
 const tuneBtn = document.querySelector('#tune-system');
 const restoreTuneBtn = document.querySelector('#restore-tune');
 const progressFill = document.querySelector('#progress-fill');
@@ -311,13 +312,22 @@ function renderGameOptions() {
   onGameChange();
 }
 
-async function loadGames() {
+async function loadGames(force) {
   try {
-    const data = await invokeAction({ action: 'scan' });
+    // The backend caches the scan for 24 h, so a normal launch is instant. The 检测游戏 button passes
+    // force=true, which makes the backend rescan from disk.
+    if (force) setStatus('正在重新检测已安装的游戏…');
+    const data = await invokeAction({ action: force ? 'scan-force' : 'scan' });
     allGames = data.games || [];
     qosCapability = data.qos || null;
     renderGameOptions();
     reportQosCapability();
+    if (force) {
+      const count = allGames.filter(g => g.installed).length;
+      appendLog(`=== 检测游戏 ===`);
+      appendLog(`重新扫描完成：${count} 个已安装的联网游戏${data.scannedAt ? '（' + new Date(data.scannedAt).toLocaleString() + '）' : ''}。`);
+      setStatus(`检测完成，共 ${count} 个已安装的联网游戏。`);
+    }
   } catch (err) {
     gameSelect.innerHTML = '<option>检测失败</option>';
     appendLog('游戏检测失败：' + err.message);
@@ -674,6 +684,17 @@ restoreBtn.addEventListener('click', restoreHosts);
 tuneBtn.addEventListener('click', tuneSystem);
 restoreTuneBtn.addEventListener('click', restoreTune);
 boostBtn.addEventListener('click', toggleBoost);
+rescanBtn.addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  rescanBtn.disabled = true;
+  try {
+    await loadGames(true);
+  } finally {
+    busy = false;
+    rescanBtn.disabled = false;
+  }
+});
 
 setupProgressListener();
-loadGames();
+loadGames(false);
