@@ -383,28 +383,47 @@ function Get-SteamInstalledApps {
 # --- Platform targets ---------------------------------------------------------------------------
 # Most games only expose the SAME handful of platform endpoints (login, updates, friends, store).
 # Ranking them per-game does not scale, so the endpoints are defined per PLATFORM and every
-# catalogue title inherits its platform's targets. A game only needs its own $Catalog entry when it
-# has game-specific endpoints worth ranking (see Limbus / Brown Dust 2).
+# catalogue title inherits its platform's targets.
+#
+# Each platform carries SEVERAL groups (login endpoints vs download CDN) rather than one flat list,
+# so a detected game shows exactly the same cards as a game with its own $Catalog entry. A single
+# merged group made platform games look like they ranked less than profiled ones, even though the
+# domains were identical.
 $PlatformTargets = [ordered]@{
     'Steam' = @{
-        Vendor = 'Steam'; Tag = 'STEAM'; Label = 'Steam platform (login / updates)'
-        Domains = @('api.steampowered.com', 'login.steampowered.com', 'steamcdn-a.akamaihd.net')
+        Vendor = 'Steam'
+        Groups = @(
+            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Domains = @('api.steampowered.com', 'login.steampowered.com') },
+            @{ Label = 'Steam CDN'; Tag = 'STEAM'; Domains = @('steamcdn-a.akamaihd.net') }
+        )
     }
     'Ubisoft' = @{
-        Vendor = 'Ubisoft Connect'; Tag = 'UBISOFT'; Label = 'Ubisoft Connect (login / services)'
-        Domains = @('ubisoft.com', 'www.ubisoft.com', 'ubisoftconnect.com')
+        Vendor = 'Ubisoft Connect'
+        Groups = @(
+            @{ Label = 'Ubisoft Connect (login / services)'; Tag = 'UBISOFT'; Domains = @('ubisoftconnect.com') },
+            @{ Label = 'Ubisoft sites'; Tag = 'UBISOFT'; Domains = @('ubisoft.com', 'www.ubisoft.com') }
+        )
     }
     'Epic' = @{
-        Vendor = 'Epic Games'; Tag = 'EPIC'; Label = 'Epic Online Services'
-        Domains = @('epicgames.com', 'www.epicgames.com')
+        Vendor = 'Epic Games'
+        Groups = @(
+            @{ Label = 'Epic Online Services'; Tag = 'EPIC'; Domains = @('epicgames.com') },
+            @{ Label = 'Epic store / sites'; Tag = 'EPIC'; Domains = @('www.epicgames.com') }
+        )
     }
     'Blizzard' = @{
-        Vendor = 'Blizzard'; Tag = 'BLIZZARD'; Label = 'Battle.net'
-        Domains = @('blizzard.com', 'us.battle.net')
+        Vendor = 'Blizzard'
+        Groups = @(
+            @{ Label = 'Battle.net'; Tag = 'BLIZZARD'; Domains = @('us.battle.net') },
+            @{ Label = 'Blizzard sites'; Tag = 'BLIZZARD'; Domains = @('blizzard.com') }
+        )
     }
     'EA' = @{
-        Vendor = 'EA'; Tag = 'EA'; Label = 'EA account / services'
-        Domains = @('accounts.ea.com', 'signin.ea.com', 'origin-a.akamaihd.net')
+        Vendor = 'EA'
+        Groups = @(
+            @{ Label = 'EA account / sign-in'; Tag = 'EA'; Domains = @('accounts.ea.com', 'signin.ea.com') },
+            @{ Label = 'EA CDN'; Tag = 'EA'; Domains = @('origin-a.akamaihd.net') }
+        )
     }
 }
 
@@ -453,16 +472,18 @@ function Get-PlatformHintsFromDisk([string]$InstallPath) {
 
 # All endpoint groups for one game: its primary platform first, then any additional publisher
 # client detected on disk.
+# De-duplication is by LABEL, not by tag: a platform deliberately has several groups that share one
+# tag (Steam API + Steam CDN), so de-duplicating on the tag would silently drop the second group.
 function Get-TargetsForPlatform {
     param([string]$PlatformName, [string[]]$ExtraPlatforms = @())
     $groups = @(Get-PlatformTargets $PlatformName)
-    $seenTags = @{}
-    foreach ($g in $groups) { $seenTags[$g.Tag] = $true }
+    $seenLabels = @{}
+    foreach ($g in $groups) { $seenLabels[$g.Label] = $true }
     foreach ($extra in @($ExtraPlatforms)) {
         if (-not $extra -or $extra -eq $PlatformName) { continue }
         foreach ($g in @(Get-PlatformTargets $extra)) {
-            if ($seenTags.ContainsKey($g.Tag)) { continue }
-            $seenTags[$g.Tag] = $true
+            if ($seenLabels.ContainsKey($g.Label)) { continue }
+            $seenLabels[$g.Label] = $true
             $groups += $g
         }
     }
@@ -472,7 +493,11 @@ function Get-TargetsForPlatform {
 function Get-PlatformTargets([string]$PlatformName) {
     if (-not $PlatformTargets.Contains($PlatformName)) { return @() }
     $p = $PlatformTargets[$PlatformName]
-    return @(@{ Label = $p.Label; Tag = $p.Tag; Mode = 'probe'; Domains = @($p.Domains) })
+    $out = @()
+    foreach ($g in @($p.Groups)) {
+        $out += [ordered]@{ Label = $g.Label; Tag = $g.Tag; Mode = 'probe'; Domains = @($g.Domains) }
+    }
+    return $out
 }
 
 # --- Offline online/single-player detection ------------------------------------------------------
@@ -653,6 +678,11 @@ function Get-GameCachePath {
     return Join-Path $dir 'games-cache.json'
 }
 
+# Bump this whenever the cached game structure changes, so an old cache written by a previous version
+# is discarded instead of being rendered with the new UI. (Version 1 was the single-group platform
+# layout; version 2 splits platforms into login/CDN groups.)
+$GameCacheVersion = 2
+
 function Read-GameCache([int]$MaxAgeHours = 24) {
     $path = Get-GameCachePath
     if (-not (Test-Path -LiteralPath $path)) { return $null }
@@ -661,6 +691,7 @@ function Read-GameCache([int]$MaxAgeHours = 24) {
         if (-not $text.Trim()) { return $null }
         $data = $text | ConvertFrom-Json
         if (-not $data.savedAt -or -not $data.games) { return $null }
+        if ($data.version -ne $GameCacheVersion) { return $null }
         $age = (Get-Date) - [datetime]$data.savedAt
         if ($age.TotalHours -gt $MaxAgeHours) { return $null }
         return $data
@@ -672,6 +703,7 @@ function Read-GameCache([int]$MaxAgeHours = 24) {
 function Write-GameCache($Games, $Qos) {
     $path = Get-GameCachePath
     $payload = [ordered]@{
+        version = $GameCacheVersion
         savedAt = (Get-Date).ToString('o')
         games = @($Games)
         qos = $Qos
