@@ -375,6 +375,155 @@ function Get-SteamInstalledApps {
     return $apps
 }
 
+# --- Games installed through other store clients -------------------------------------------------
+# Steam publishes a local online/single-player flag (see Get-SteamAppOnlineFlags). Epic, Ubisoft, EA,
+# GOG and Battle.net do NOT, so those stores are scanned for installed games and a title is only
+# listed when its name matches a known online-game keyword -- the same conservative rule the Steam
+# path follows: never list something that cannot be verified as an online game.
+#
+# Every source is optional and guarded: a missing registry key or an absent store simply contributes
+# nothing, so the scan stays fast on machines that only have Steam.
+$KnownOnlineNamePatterns = @(
+    # Epic
+    'fortnite', 'rocket league', 'fall guys', 'genshin', 'honkai', 'valorant',
+    'alan wake', 'satisfactory', 'snowrunner',
+    # Ubisoft
+    'rainbow six', 'assassin', 'far cry', 'division', 'ghost recon', 'for honor',
+    'watch dogs', 'trackmania', 'the crew', 'skull and bones',
+    # EA
+    'battlefield', 'apex', 'fifa', 'ea sports', 'star wars', 'need for speed',
+    'the sims', 'titanfall', 'mass effect', 'dragon age', 'anthem',
+    # Blizzard
+    'overwatch', 'call of duty', 'diablo', 'world of warcraft', 'hearthstone',
+    'starcraft', 'heroes of the storm', 'warcraft',
+    # Others / cross-store
+    'destiny', 'warframe', 'path of exile', 'black desert', 'lost ark', 'pubg',
+    'naraka', 'new world', 'dead by daylight', 'rust', 'ark', 'dayz', 'escape from tarkov',
+    'world of tanks', 'war thunder', 'gta', 'grand theft auto', 'red dead', 'elder scrolls',
+    'final fantasy', 'monster hunter', 'honor of kings', 'delta force', 'marvel rivals',
+    'the finals', 'helldivers', 'lethal company', 'phasmophobia', 'among us'
+)
+
+function Test-KnownOnlineName([string]$Name) {
+    if (-not $Name) { return $false }
+    $lower = $Name.ToLowerInvariant()
+    foreach ($p in $KnownOnlineNamePatterns) {
+        if ($lower.Contains($p)) { return $true }
+    }
+    return $false
+}
+
+# Epic keeps one JSON manifest per installed game.
+function Get-EpicInstalledGames {
+    $out = @()
+    $dirs = @(
+        (Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'),
+        (Join-Path $env:LOCALAPPDATA 'EpicGamesLauncher\Data\Manifests')
+    )
+    foreach ($dir in ($dirs | Select-Object -Unique)) {
+        if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.item' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $j = [System.IO.File]::ReadAllText($f.FullName, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                if (-not $j.DisplayName -or -not $j.InstallLocation) { continue }
+                if (-not (Test-Path -LiteralPath $j.InstallLocation)) { continue }
+                $out += [ordered]@{
+                    appId = "epic-$($j.AppName)"; name = $j.DisplayName
+                    installPath = $j.InstallLocation; executable = $j.LaunchExecutable
+                    vendor = 'Epic Games'; platform = 'Epic'; source = 'Epic manifest'
+                }
+            } catch {}
+        }
+    }
+    return $out
+}
+
+# Ubisoft / EA / GOG / Battle.net all record installs as registry subkeys.
+function Get-RegistryInstalledGames {
+    $out = @()
+    $sources = @(
+        @{ Tag = 'Ubisoft'; Platform = 'Ubisoft'; Vendor = 'Ubisoft Connect'
+           Roots = @('HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs', 'HKLM:\SOFTWARE\Ubisoft\Launcher\Installs', 'HKCU:\SOFTWARE\Ubisoft\Launcher\Installs')
+           NameProps = @('DisplayName', 'Name'); PathProps = @('InstallDir', 'InstallLocation', 'Path') },
+        @{ Tag = 'EA'; Platform = 'EA'; Vendor = 'EA'
+           Roots = @('HKLM:\SOFTWARE\WOW6432Node\Electronic Arts', 'HKLM:\SOFTWARE\Electronic Arts')
+           NameProps = @('DisplayName', 'ProductName', 'Name'); PathProps = @('InstallLocation', 'Install Dir', 'InstallDir', 'Path') },
+        @{ Tag = 'GOG'; Platform = 'GOG'; Vendor = 'GOG Galaxy'
+           Roots = @('HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games', 'HKLM:\SOFTWARE\GOG.com\Games')
+           NameProps = @('gameName', 'DisplayName'); PathProps = @('path', 'InstallLocation') },
+        @{ Tag = 'Blizzard'; Platform = 'Blizzard'; Vendor = 'Battle.net'
+           Roots = @('HKLM:\SOFTWARE\WOW6432Node\Blizzard Entertainment', 'HKLM:\SOFTWARE\Blizzard Entertainment')
+           NameProps = @('DisplayName', 'Name'); PathProps = @('InstallLocation', 'InstallPath', 'Path') }
+    )
+    foreach ($src in $sources) {
+        foreach ($root in $src.Roots) {
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            foreach ($key in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+                try {
+                    $props = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop
+                    $name = $null
+                    foreach ($np in $src.NameProps) { if (-not $name -and $props.$np) { $name = $props.$np } }
+                    if (-not $name) { $name = $key.PSChildName }
+                    $path = $null
+                    foreach ($pp in $src.PathProps) { if (-not $path -and $props.$pp) { $path = $props.$pp } }
+                    $path = "$path".TrimEnd('\')
+                    if (-not $path -or -not (Test-Path -LiteralPath $path)) { continue }
+                    $out += [ordered]@{
+                        appId = "$($src.Tag.ToLower())-$($key.PSChildName)"; name = "$name"
+                        installPath = $path; executable = $null
+                        vendor = $src.Vendor; platform = $src.Platform; source = "Registry ($($src.Tag))"
+                    }
+                } catch {}
+            }
+        }
+    }
+    return $out
+}
+
+# Xbox / Microsoft Store games are Appx packages that ship a MicrosoftGame.config manifest -- that
+# file is the reliable marker (many non-game packages exist, and Get-AppxPackage alone cannot tell
+# them apart). The friendly title lives inside the config rather than in the package name.
+function Get-XboxInstalledGames {
+    $out = @()
+    try {
+        foreach ($pkg in @(Get-AppxPackage -ErrorAction Stop)) {
+            if (-not $pkg.InstallLocation) { continue }
+            $cfg = Join-Path $pkg.InstallLocation 'MicrosoftGame.config'
+            if (-not (Test-Path -LiteralPath $cfg)) { continue }
+            $title = $null
+            try {
+                $raw = [System.IO.File]::ReadAllText($cfg, [System.Text.UTF8Encoding]::new($false))
+                $title = [regex]::Match($raw, 'DisplayName\s*=\s*"([^"]+)"').Groups[1].Value
+                if (-not $title) { $title = [regex]::Match($raw, '<Executable[^>]*Name\s*=\s*"([^"]+)"').Groups[1].Value }
+            } catch {}
+            if (-not $title) { $title = $pkg.Name }
+            $out += [ordered]@{
+                appId = "xbox-$($pkg.Name)"; name = "$title"
+                installPath = $pkg.InstallLocation; executable = $null
+                vendor = 'Microsoft Store'; platform = 'Xbox'; source = 'Microsoft Store'
+            }
+        }
+    } catch {}
+    return $out
+}
+
+function Get-ThirdPartyInstalledGames {
+    $all = @()
+    foreach ($src in @(Get-EpicInstalledGames), @(Get-RegistryInstalledGames), @(Get-XboxInstalledGames)) { $all += $src }
+    # De-duplicate by platform + name, NOT by install path: two unrelated titles can legitimately
+    # share a folder (some launchers report a common root), and keying on the path silently dropped
+    # the second one.
+    $seen = @{}
+    $out = @()
+    foreach ($g in $all) {
+        $k = "$($g.platform)|$($g.name)".ToLowerInvariant()
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        $out += $g
+    }
+    return $out
+}
+
 # --- Platform targets ---------------------------------------------------------------------------
 # Most games only expose the SAME handful of platform endpoints (login, updates, friends, store).
 # Ranking them per-game does not scale, so the endpoints are defined per PLATFORM and every
@@ -702,7 +851,8 @@ function Get-GameCachePath {
 #   2 = platforms split into login / CDN groups
 #   3 = dedicated profiles merge with platform targets instead of replacing them
 #   4 = Steam endpoints removed entirely (see the note in $PlatformTargets)
-$GameCacheVersion = 4
+#   5 = non-Steam stores scanned too (Epic / Ubisoft / EA / GOG / Battle.net / Microsoft Store)
+$GameCacheVersion = 5
 
 function Read-GameCache([int]$MaxAgeHours = 24) {
     $path = Get-GameCachePath
@@ -865,6 +1015,35 @@ function Get-OnlineGameList {
             platform = $platformName
             extraPlatforms = $extraPlatforms
             optGroups = $platformGroups
+        }
+    }
+
+    # 3) games installed through OTHER store clients (Epic / Ubisoft / EA / GOG / Battle.net).
+    #    The app used to scan Steam only, so someone with the Ubisoft or EA build of a game was told
+    #    nothing was installed. Those stores publish no local online flag, so a title is listed only
+    #    when its name matches a known online game -- the same conservative rule the Steam path uses.
+    $seenNames = @{}
+    foreach ($g in @($result)) { if ($g.name) { $seenNames["$($g.name)".ToLowerInvariant()] = $true } }
+    foreach ($tp in @(Get-ThirdPartyInstalledGames)) {
+        if (-not (Test-KnownOnlineName $tp.name)) { continue }
+        $key = "$($tp.name)".ToLowerInvariant()
+        if ($seenNames.ContainsKey($key)) { continue }   # already covered by a $Catalog entry
+        $seenNames[$key] = $true
+        $tpGroups = @(ConvertTo-GroupList @(Get-TargetsForPlatform -PlatformName $tp.platform -ExtraPlatforms @(Get-PlatformHintsFromDisk $tp.installPath)))
+        $tpVendor = $tp.vendor
+        if ($PlatformTargets.Contains($tp.platform)) { $tpVendor = $PlatformTargets[$tp.platform].Vendor }
+        $result += [ordered]@{
+            id = $tp.appId; appId = $null
+            name = $tp.name
+            vendor = $tpVendor
+            installed = $true; running = $false
+            executablePath = $null; source = $tp.source
+            support = ($tpGroups.Count -gt 0)
+            online = $true; recognized = $true
+            accelerated = $false; helpsGameplay = $false; standalone = $true
+            platform = $tp.platform
+            extraPlatforms = @()
+            optGroups = $tpGroups
         }
     }
     return $result
