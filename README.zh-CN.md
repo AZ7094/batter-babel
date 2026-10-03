@@ -8,17 +8,13 @@
 
 ## 功能特性
 
-### 先讲清楚：这个软件能做什么、不能做什么
-
 **能做的**：加速**基于域名的服务**，也就是登录、更新、大厅、好友、成就、商店、官方站点、资源 CDN。
 
 **不能做的**：
 - **游戏内延迟** —— 对局流量是 UDP 直连服务器（或 P2P 直连玩家），**不经过域名**，`hosts` 无从下手。这类游戏软件会自动显示琥珀色提示说明。
 - **游戏内下载**（地图 / mod / 存档同步）—— Steam 是先向 Connection Manager 要一份**内容服务器 IP 列表**再直连那些 IP，P2P 传输更是完全没有域名。想加速 Steam 下载请用官方开关：**Steam → 设置 → 下载 → 下载区域**，比任何 `hosts` 优化都有效。
 
-要不要显示提示，取决于 `$Catalog` 里的 `HelpsGameplay` 开关——判断标准是「优化这些域名**是否真的改善这个游戏**」，而**不是**按游戏品类贴标签。
-
-### 加速游戏（本机 QoS，专治游戏内延迟）
+### 加速游戏（本机 QoS）
 
 这是唯一能改善**对局延迟**的手段（对 Hunt: Showdown 这类服务器动态分配的游戏尤其有用）。
 
@@ -26,28 +22,16 @@
 - **所有 Windows 版本都能用。** 家庭版没有组策略，`-PolicyStore Local` 必然报「找不到网络路径」（System Error 53）；软件会先试 `Local`（重启后仍有效），失败则**自动降级到 `ActiveStore`**，并注册一个**登录计划任务**在每次重启后自动重建规则——家庭版用户不需要每次手动点。取消最后一个加速时任务会自动注销。
 - 按钮状态保存在 `%LOCALAPPDATA%\BatterBabel\boosted.json`（直接读 QoS 存储需要管理员权限，普通扫描没有）。记录里还包含**存储类型**和**开机时间**，所以重启后能正确判断规则是否已失效。
 
-### 游戏检测：自动识别，不靠名单
+### 游戏检测
 
 - Steam 把每个 app 的**分类标记**存在本地 `appcache/appinfo.vdf` 里，键名就是 `category_<id>`（Steam 官方 ID：`1` 多人、`9` 合作、`20` MMO、`27` 跨平台多人、`36` 在线 PvP、`38` 在线合作）。软件直接解析这个二进制 KeyValues 文件——16 字节头（magic `0x07564428`/`0x07564429`、universe、字符串表偏移）→ 重复的 `[appid][size][binary KV]` 条目 → 末尾字符串表（键名**按索引引用**）——**完全离线**判断是否联网，不需要商店 API（很多网络下压根连不上）。
-- 所以**别人装了战地、彩虹六号、任何联网游戏，都会被自动检测到**，不需要我提前加名单。实测：`Lossless Scaling`（工具，只有 `10`/`62` 分类）被自动剔除；`How to Fish`（多人 + 合作）、`CS2`、`SCP: SL`、`Crimson Desert`（Steam 标记其有在线 PvP）都能正确识别。
-- **只列已安装的游戏。** 遍历所有 Steam 库（`libraryfolders.vdf` + 注册表，解析每个 `appmanifest_*.acf`），独立客户端则通过卸载注册表和常见安装目录（`STOVE`、`Neowiz` 等）查找。打不开的游戏没有理由出现在选择框里。库路径按大小写不敏感去重（`d:\steam` 和 `D:\steam` 是同一个库），Steam 的运行时组件（appid 228980）会被跳过。
+- 遍历所有 Steam 库（`libraryfolders.vdf` + 注册表，解析每个 `appmanifest_*.acf`），独立客户端则通过卸载注册表和常见安装目录（`STOVE`、`Neowiz` 等）查找。库路径按大小写不敏感去重（`d:\steam` 和 `D:\steam` 是同一个库），Steam 的运行时组件（appid 228980）会被跳过。
 
 ### 平台目标：检测到的游戏都能优选
 
-大多数游戏只会连那么几个平台服务，所以域名按**平台**定义（`$PlatformTargets`：Steam、Ubisoft、Epic、Blizzard、EA），检测到的游戏自动继承所属平台的目标。彩虹六号用育碧 Connect 的域名，SCP: SL 用 Steam 的——**不需要逐个游戏配置**。
+大多数游戏只会连那么几个平台服务，所以域名按**平台**定义（`$PlatformTargets`：Steam、Ubisoft、Epic、Blizzard、EA），检测到的游戏自动继承所属平台的目标。彩虹六号用育碧 Connect 的域名，SCP: SL 用 Steam 的。
 
 只有当游戏有**专属**域名值得优选时，才需要单独的 `$Catalog` 条目。`$OnlineGameIds`（约 83 个常见联网游戏）只是本地元数据没覆盖到时的兜底。
-
-已有专属配置的游戏：
-
-| 游戏 | 优选目标 |
-|---|---|
-| **Limbus Company** | Cloudflare 下载 CDN + CloudFront API |
-| **CS2** / **Hunt: Showdown 1896** | Steam API + Steam CDN |
-| **Apex Legends** | EA 账号 / 登录 + EA CDN |
-| **Don't Starve Together** | Klei 大厅 / 账号 + Steam API |
-| **Terraria** | Steam API + 官方网站（Cloudflare） |
-| **Brown Dust 2** | 游戏 CDN + STOVE 平台（独立客户端） |
 
 游戏 ID 只做格式校验，**游戏定义的唯一位置就是 `optimization.ps1` 里的 `$Catalog`**——新增游戏不需要动 Rust 层，也没有 `ValidateSet` 要同步。
 
