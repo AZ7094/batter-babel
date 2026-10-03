@@ -55,7 +55,6 @@ Generic latency fixes that benefit any online game:
 - **Windows network throttling** — `NetworkThrottlingIndex` disabled, `SystemResponsiveness`=10
 - **Wi-Fi power** — adapter set to maximum performance
 - **Background bandwidth check** — lists bandwidth hogs (Baidu Netdisk, Thunder, video and torrent clients…)
-- Optional: CS2 `autoexec.cfg` network parameters, only when CS2 is installed (original backed up)
 
 **Restore system tuning** — before the first change the originals are snapshotted to `%LOCALAPPDATA%\BatterBabel\tune-state.json`; one click restores everything.
 
@@ -68,15 +67,6 @@ A pre-built installer is published on the [Releases](../../releases) page:
 > Requires the **WebView2 Runtime** (preinstalled on Windows 11 and on up-to-date Windows 10).
 
 ## Usage
-
-1. Install and launch. The app scans automatically and lists every **installed** game that Steam flags as having online content.
-2. Pick a game in the **游戏** dropdown — the result cards below switch to that game's CDN / API targets.
-3. Click **开始优选** to rank the routes; results appear in the cards and the log, and the progress bar follows the real work (per-IP speed tests, per-domain probes).
-4. Click **写入 hosts** to apply (Windows UAC prompt). Use **还原 hosts** to revert.
-5. **加速游戏** creates the QoS rule (`DSCP 46`) for that game — the only optimisation that helps UDP match traffic. Click it again (it becomes **取消游戏加速**) to remove it.
-6. **系统调优** applies the generic network tuning in one click — it is **not** tied to the selected game.
-7. **还原系统调优** restores every value that was changed.
-
 Only **写入 hosts**, **还原 hosts**, **加速游戏 / 取消游戏加速**, **系统调优** and **还原系统调优** request administrator rights. Refusing never changes any of your network settings.
 
 ## Build from source
