@@ -551,12 +551,25 @@ function Get-SteamAppOnlineFlags([string[]]$AppIds) {
     return $flags
 }
 
-function Get-GameTargets($Game) {
-    $groups = @()
-    foreach ($g in $Game.OptGroups) {
-        $groups += [ordered]@{ label = $g.Label; tag = $g.Tag; domains = @($g.Domains) }
+# The frontend reads lower-case field names (label / tag / domains), while groups defined in
+# $Catalog use PowerShell's natural upper-case spelling. Everything must therefore be normalised in
+# ONE place before serialising: platform-derived groups used to skip this step, so games without a
+# dedicated profile (Battlefield, SCP: SL, ...) rendered as empty cards while profiled games worked.
+# Accepts either spelling so a caller cannot get it wrong again.
+function ConvertTo-GroupList($Groups) {
+    $out = @()
+    foreach ($g in @($Groups)) {
+        if (-not $g) { continue }
+        $lbl = $g.label;   if (-not $lbl) { $lbl = $g.Label }
+        $tg  = $g.tag;     if (-not $tg)  { $tg  = $g.Tag }
+        $dm  = $g.domains; if (-not $dm)  { $dm  = $g.Domains }
+        $out += [ordered]@{ label = $lbl; tag = $tg; domains = @($dm) }
     }
-    return $groups
+    return $out
+}
+
+function Get-GameTargets($Game) {
+    return ConvertTo-GroupList $Game.OptGroups
 }
 
 # True when this game is recorded as boosted. Uses the local state file because reading the QoS
@@ -719,6 +732,9 @@ function Get-OnlineGameList {
             $extraPlatforms = @(Get-PlatformHintsFromDisk $app.installPath)
         }
         $platformGroups = @(Get-TargetsForPlatform -PlatformName $platformName -ExtraPlatforms $extraPlatforms)
+        # Normalise to the lower-case shape the frontend expects (platform groups used to keep
+        # PowerShell's upper-case spelling and rendered as blank cards).
+        $platformGroups = @(ConvertTo-GroupList $platformGroups)
         $vendorName = 'Steam'
         if ($PlatformTargets.Contains($platformName)) { $vendorName = $PlatformTargets[$platformName].Vendor }
         if ($extraPlatforms.Count -gt 0) { $vendorName = "$vendorName + $($extraPlatforms -join ' / ')" }

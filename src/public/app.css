@@ -100,11 +100,15 @@ button.ghost:disabled { background: #6a7076; border-color: #6a7076; color: #1a1f
 .card .result .line { display: block; }
 .card .result .bad { color: var(--muted); }
 
-/* 各 CDN 分组配色 */
+/* 各 CDN / 平台分组配色（与 $PlatformTargets 和 $Catalog 里的 tag 一一对应） */
 .card[data-tag="CF"] { background: #1c2735; border-color: #2c3a4d; }
 .card[data-tag="AMAZON"] { background: #2b231d; border-color: #46392e; }
 .card[data-tag="STEAM"] { background: #1b2430; border-color: #2b3a4a; }
 .card[data-tag="EA"] { background: #2a1f26; border-color: #45303c; }
+.card[data-tag="KLEI"] { background: #26202e; border-color: #3d3349; }
+.card[data-tag="UBISOFT"] { background: #17222b; border-color: #263a47; }
+.card[data-tag="EPIC"] { background: #232326; border-color: #3a3a3f; }
+.card[data-tag="BLIZZARD"] { background: #1a2233; border-color: #2b3a52; }
 
 /* hosts 路径 */
 .hosts-path { color: var(--muted); font-size: 11px; }
