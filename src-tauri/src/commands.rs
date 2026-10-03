@@ -124,7 +124,14 @@ fn is_ipv4(s: &str) -> bool {
         return false;
     }
     parts.iter().all(|p| {
-        !p.is_empty() && p.len() <= 3 && p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u8>().is_ok()
+        // Reject non-canonical octets such as "010": PowerShell's [IPAddress]::Parse reads a
+        // leading zero as OCTAL, so "010.1.1.1" would silently become 8.1.1.1 by the time the
+        // address reaches the elevated hosts write.
+        !p.is_empty()
+            && p.len() <= 3
+            && p.chars().all(|c| c.is_ascii_digit())
+            && !(p.len() > 1 && p.starts_with('0'))
+            && p.parse::<u8>().is_ok()
     })
 }
 
@@ -283,4 +290,48 @@ fn run_action_blocking(
     }
 
     serde_json::from_str(&raw).map_err(|e| format!("优化服务返回格式错误: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_leading_zero_octets() {
+        // PowerShell's [IPAddress]::Parse reads leading zeros as OCTAL, so "010.1.1.1"
+        // silently becomes 8.1.1.1 and the wrong IP would be written into hosts.
+        assert!(!is_ipv4("010.1.1.1"));
+        assert!(!is_ipv4("01.02.03.04"));
+        assert!(!is_ipv4("192.168.01.1"));
+    }
+
+    #[test]
+    fn accepts_canonical_ipv4() {
+        assert!(is_ipv4("1.2.3.4"));
+        assert!(is_ipv4("0.0.0.0"));
+        assert!(is_ipv4("255.255.255.255"));
+        assert!(is_ipv4("108.162.192.1"));
+    }
+
+    #[test]
+    fn rejects_malformed_ipv4() {
+        assert!(!is_ipv4(""));
+        assert!(!is_ipv4("1.2.3"));
+        assert!(!is_ipv4("1.2.3.4.5"));
+        assert!(!is_ipv4("256.1.1.1"));
+        assert!(!is_ipv4("1.2.3.4x"));
+        assert!(!is_ipv4("1..3.4"));
+        assert!(!is_ipv4(" 1.2.3.4"));
+    }
+
+    #[test]
+    fn validates_game_ids_by_format() {
+        assert!(is_valid_game_id("limbus"));
+        assert!(is_valid_game_id("cs2"));
+        assert!(is_valid_game_id("hunt-dst_2026"));
+        assert!(!is_valid_game_id(""));
+        assert!(!is_valid_game_id("Game"));
+        assert!(!is_valid_game_id("game with space"));
+        assert!(!is_valid_game_id(&"a".repeat(33)));
+    }
 }

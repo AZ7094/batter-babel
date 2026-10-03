@@ -205,6 +205,34 @@ function appendLog(lines) {
 
 function clearLog() { logEl.innerHTML = ''; }
 
+// Why a probe target could not be used. The backend reports a structured reason (timeout vs
+// certificate vs HTTP status vs business content) instead of collapsing everything into one
+// "fallback DNS" line, so the UI can say what actually went wrong.
+const PROBE_REASONS = {
+  None: '正常',
+  NoResponse: '无响应',
+  NoStatus: '没有返回 HTTP 状态',
+  DnsFailure: '域名解析失败',
+  ConnectFailure: '连接被拒绝',
+  Timeout: '请求超时',
+  TlsHandshake: 'TLS 握手失败',
+  Certificate: '证书校验失败',
+  MissingHeader: '响应缺少该服务的特征头',
+  BusinessContent: '返回内容不是该服务的正常响应',
+  NoCandidate: '没有解析到候选地址',
+  DeadlineExceeded: '超过时间上限未测完',
+};
+
+function probeReason(reason) {
+  if (!reason) return '未知原因';
+  if (PROBE_REASONS[reason]) return PROBE_REASONS[reason];
+  const http = /^HttpStatus(\d{3})$/.exec(reason);
+  if (http) return `HTTP ${http[1]}`;
+  const curl = /^CurlExit(\d+)$/.exec(reason);
+  if (curl) return `连接错误（curl ${curl[1]}）`;
+  return reason;
+}
+
 function cardHtml(tag, label, domains, resultHtml, cls) {
   return `<article class="card" data-tag="${escapeHtml(tag || '')}">
       <h3>${escapeHtml(label || '')}</h3>
@@ -277,7 +305,7 @@ function renderResult(data) {
       const items = g.items || [];
       resultHtml = items.map(it => it.ok
         ? `<span class="line">${escapeHtml(it.domain)} → ${escapeHtml(it.ip)}（${it.latency} ms）</span>`
-        : `<span class="line bad">${escapeHtml(it.domain)} → 回退 DNS</span>`).join('');
+        : `<span class="line bad">${escapeHtml(it.domain)} → 无可用线路（${escapeHtml(probeReason(it.reason))}）</span>`).join('');
       cls = items.some(it => it.ok) ? 'good' : 'fallback';
     }
     return cardHtml(g.tag, g.label, domains, resultHtml, cls);

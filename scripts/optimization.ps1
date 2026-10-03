@@ -1123,7 +1123,7 @@ $RouteCatalog = [ordered]@{
 }
 
 function Resolve-Ip([string]$Hostname) {
-    if ($Hostname -match '^\d{1,3}(\.\d{1,3}){3}$') { return $Hostname }
+    if (Test-StrictIPv4 $Hostname) { return $Hostname }
     try {
         $addr = [System.Net.Dns]::GetHostAddresses($Hostname) |
             Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } |
@@ -1219,55 +1219,18 @@ function Get-RouteProbe {
 }
 
 # --- Cloudflare CDN optimisation (LLC_BABEL style) ---
-# Official public Cloudflare IPv4 ranges (https://www.cloudflare.com/ips-v4)
-$CloudflareRanges = @(
-    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
-    '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
-    '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/12',
-    '172.64.0.0/17', '172.64.128.0/18', '172.64.192.0/19', '172.64.224.0/22',
-    '172.64.229.0/24', '172.64.230.0/23', '172.64.232.0/21', '172.64.240.0/21',
-    '172.64.248.0/21', '172.65.0.0/16', '172.66.0.0/16', '172.67.0.0/16', '131.0.72.0/22'
-)
+# Pure IP/CIDR helpers and the Cloudflare range list live in ip-core.ps1 so the test
+# runner can dot-source them without executing this script's action dispatcher.
+# The generic HTTPS endpoint probe (rules, candidate discovery, curl transport, pure verdict
+# function) lives in cf-probe.ps1 for the same reason.
+# NOTE: both files must also be listed in src-tauri/tauri.conf.json bundle.resources.
+. "$PSScriptRoot\ip-core.ps1"
+. "$PSScriptRoot\cf-probe.ps1"
 
-# Limbus Company download CDN domains (Cloudflare-fronted).
-$CfDomainCatalog = [ordered]@{
-    'download.limbuscompanycdn.org'       = 'Limbus Download'
-    'downloadcommon.limbuscompanycdn.org' = 'Limbus Download Common'
-    'downloadfmod.limbuscompanycdn.org'   = 'Limbus Download FMOD'
-}
-
-# Limbus Company API endpoints (Amazon CloudFront).
-$CloudFrontEndpoints = @(
-    @{ Label = 'www';    Domain = 'www.limbuscompanyapi.com';    ProbeUrl = 'https://www.limbuscompanyapi.com/' }
-    @{ Label = 'notice'; Domain = 'notice.limbuscompanyapi.com'; ProbeUrl = 'https://notice.limbuscompanyapi.com/' }
-)
-
-# Public DoH resolvers used to discover CloudFront candidate IPs (avoids local DNS pollution).
-$CloudFrontDohSources = @(
-    @{ Name = 'AliDNS';  Url = 'https://dns.alidns.com/resolve' }
-    @{ Name = 'DNSPod';  Url = 'https://doh.pub/dns-query' }
-)
-
-function Test-IpInCidr([string]$Ip, [string]$Cidr) {
-    $parts = $Cidr -split '/'
-    $netBytes = [System.Net.IPAddress]::Parse($parts[0]).GetAddressBytes()
-    $ipBytes = [System.Net.IPAddress]::Parse($Ip).GetAddressBytes()
-    $prefix = [int]$parts[1]
-    $fullBytes = [math]::Ceiling($prefix / 8)
-    for ($i = 0; $i -lt $fullBytes; $i++) {
-        $bits = [math]::Min(8, $prefix - ($i * 8))
-        if ($bits -lt 8) {
-            $mask = 0xFF -shl (8 - $bits)
-            if (($ipBytes[$i] -band $mask) -ne ($netBytes[$i] -band $mask)) { return $false }
-        } elseif ($ipBytes[$i] -ne $netBytes[$i]) { return $false }
-    }
-    return $true
-}
-
-function Test-IpInCloudflare([string]$Ip) {
-    foreach ($cidr in $CloudflareRanges) { if (Test-IpInCidr $Ip $cidr) { return $true } }
-    return $false
-}
+# NOTE: the Limbus API probe rules and the DoH source list used to live here as
+# $CfDomainCatalog / $CloudFrontEndpoints / $CloudFrontDohSources. All three were defined but never
+# read (D8), and their intent -- per-endpoint probe rules, and DoH resolvers that bypass local DNS
+# pollution -- is now implemented in cf-probe.ps1 ($ProbeEndpointRules, Get-ProbeCandidates).
 
 # Curated candidate Cloudflare IPs: addresses verified reachable/fast across multiple official
 # Cloudflare ranges (104.16.0.0/12, 172.64.0.0/13, 108.162.192.0/18, 162.158.0.0/15).
@@ -1275,49 +1238,6 @@ $CfCandidateIps = @(
     '172.64.229.1', '108.162.192.1', '104.16.0.1', '104.24.0.1', '172.66.0.1',
     '162.159.140.220', '104.16.132.229', '104.17.105.123', '104.17.112.28', '172.67.0.1'
 )
-
-function ConvertTo-IpString([long]$Value) {
-    $a = [int]([math]::Floor($Value / 16777216) % 256)
-    $b = [int]([math]::Floor($Value / 65536) % 256)
-    $c = [int]([math]::Floor($Value / 256) % 256)
-    $d = [int]($Value % 256)
-    return "$a.$b.$c.$d"
-}
-
-function ConvertFrom-IpString([string]$Ip) {
-    $bytes = [System.Net.IPAddress]::Parse($Ip).GetAddressBytes()
-    return ([long]$bytes[0] * 16777216) + ([long]$bytes[1] * 65536) + ([long]$bytes[2] * 256) + [long]$bytes[3]
-}
-
-# Builds a large candidate pool spread evenly across every official Cloudflare IPv4 range.
-# Brute-forcing the whole space is pointless (millions of addresses), so each range is walked
-# with a fixed stride: broad coverage of every anycast prefix within a bounded time.
-function Get-CfCandidatePool([int]$Target = 2000) {
-    $pool = [System.Collections.Generic.List[string]]::new()
-    $seen = @{}
-    $perRange = [math]::Max(1, [int][math]::Ceiling($Target / [double]$CloudflareRanges.Count))
-    foreach ($cidr in $CloudflareRanges) {
-        if ($pool.Count -ge $Target) { break }
-        $parts = $cidr -split '/'
-        $prefix = [int]$parts[1]
-        $baseValue = ConvertFrom-IpString $parts[0]
-        $size = [long][math]::Pow(2, 32 - $prefix)
-        $usable = [math]::Max(1, $size - 2)
-        $step = [math]::Max(1, [long][math]::Floor($usable / [double]$perRange))
-        $added = 0
-        $offset = [long]1
-        while ($added -lt $perRange -and $offset -le $usable -and $pool.Count -lt $Target) {
-            $ip = ConvertTo-IpString ($baseValue + $offset)
-            if (-not $seen.ContainsKey($ip)) {
-                $seen[$ip] = $true
-                $pool.Add($ip)
-                $added++
-            }
-            $offset += $step
-        }
-    }
-    return @($pool)
-}
 
 # --- Learned good IPs -------------------------------------------------------------------------
 # Every run records its fastest downloaders here; an address seen in the top few more than once
@@ -1645,41 +1565,10 @@ function Get-DohRecords([string]$DohUrl, [string]$Domain) {
         $json = & $curl --ssl-no-revoke -s -m 8 -H 'Accept: application/dns-json' "$DohUrl`?name=$encoded&type=A" 2>$null
         $obj = ($json -join '') | ConvertFrom-Json
         if ($obj.Status -eq 0 -and $obj.Answer) {
-            return @($obj.Answer | Where-Object { $_.type -eq 1 } | ForEach-Object { $_.data } | Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}$' })
+            return @($obj.Answer | Where-Object { $_.type -eq 1 } | ForEach-Object { $_.data } | Where-Object { Test-StrictIPv4 $_ })
         }
     } catch {}
     return @()
-}
-
-function Get-CloudFrontCandidates([string]$Domain, [int]$Max = 5) {
-    $ips = @()
-    try {
-        $ips += @([System.Net.Dns]::GetHostAddresses($Domain) | Where-Object { $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork } | ForEach-Object { $_.IPAddressToString })
-    } catch {}
-    foreach ($src in $CloudFrontDohSources) {
-        $ips += @(Get-DohRecords $src.Url $Domain)
-    }
-    # Cap the list: DNS already returns CDN-preferred addresses, and probing every one of them was
-    # what made a Steam-API group (8 addresses x 3 curls x 8 s timeout) blow past the timeout.
-    return @($ips | Select-Object -Unique | Select-Object -First $Max)
-}
-
-function Test-CloudFrontLatency([string]$Domain, [string]$Ip, [int]$Count = 2, [int]$TimeoutSec = 5) {
-    $curl = "$env:SystemRoot\System32\curl.exe"
-    $rtts = @()
-    for ($i = 0; $i -lt $Count; $i++) {
-        try {
-            $out = & $curl --ssl-no-revoke --resolve "$Domain`:443:$Ip" "https://$Domain/" -o NUL -s -m $TimeoutSec -w '%{time_starttransfer}|%{http_code}' 2>$null
-            $parts = ($out -join '') -split '\|'
-            if ($parts.Count -ge 2 -and $parts[1] -ne '000' -and $parts[1] -match '^\d{3}$' -and [double]$parts[0] -gt 0) {
-                $rtts += [double]$parts[0]
-            }
-        } catch {}
-    }
-    if ($rtts.Count -eq 0) { return $null }
-    $sorted = @($rtts | Sort-Object)
-    $median = $sorted[[math]::Floor($sorted.Count / 2)]
-    return [math]::Round($median * 1000, 0)
 }
 
 function Get-HostsPath {
@@ -1866,27 +1755,42 @@ if ($Action -eq 'cf-optimize') {
             $di = 0
             foreach ($domain in $domainList) {
                 Write-Tick ($start + [int](($end - $start) * $di / $domainCount)) "Resolving $domain"
-                $candidates = @(Get-CloudFrontCandidates $domain)
-                $bestIp = $null; $bestLatency = $null
-                $candCount = [math]::Max(1, $candidates.Count)
-                $ci = 0
-                foreach ($ip in $candidates) {
-                    $ci++
-                    $frac = ($di + ($ci / [double]$candCount)) / [double]$domainCount
-                    Write-Tick ($start + [int](($end - $start) * $frac)) "Probing $domain ($ci/$($candidates.Count))"
-                    $latency = Test-CloudFrontLatency $domain $ip
-                    if ($latency -ne $null -and ($bestLatency -eq $null -or $latency -lt $bestLatency)) {
-                        $bestIp = $ip; $bestLatency = $latency
-                    }
+                # Round-robin across system DNS and both DoH sources (fixes D1: the old fixed-order
+                # cap let system DNS take every slot, starving the DoH sources).
+                $discovered = Get-ProbeCandidates -Domain $domain
+                $candidates = @($discovered.ips)
+                Write-Tick ($start + [int](($end - $start) * $di / $domainCount)) "Probing $domain (0/$($candidates.Count))"
+                # Per-domain rule + three-state verdict + real median over 3 samples (fixes D3/D5),
+                # with every failure classified instead of collapsing to $null (fixes D4).
+                $probeResult = Invoke-ProbeDomain -Domain $domain -Candidates $candidates -Samples 3
+
+                $bestIp = $null; $bestLatency = $null; $verdict = 'Unusable'; $reason = 'NoCandidate'
+                if ($probeResult.best) {
+                    $bestIp = $probeResult.best.ip
+                    $bestLatency = $probeResult.best.medianMs
+                    $verdict = 'Usable'; $reason = 'None'
+                } elseif (@($probeResult.results).Count -gt 0) {
+                    $firstResult = @($probeResult.results)[0]
+                    $verdict = $firstResult.verdict
+                    $reason = "$($firstResult.reason)"
                 }
                 $di++
-                $items += [ordered]@{ domain = $domain; ip = $bestIp; latency = $bestLatency; ok = ($bestIp -ne $null) }
-                if ($bestIp) { $log.Add("$domain -> $bestIp ($bestLatency ms)") } else { $log.Add("$domain -> fallback DNS") }
+                $items += [ordered]@{
+                    domain = $domain; ip = $bestIp; latency = $bestLatency
+                    ok = ($bestIp -ne $null); verdict = $verdict; reason = $reason
+                    candidates = $candidates.Count
+                }
+                if ($bestIp) {
+                    $log.Add("$domain -> $bestIp ($bestLatency ms, $($candidates.Count) candidates)")
+                } else {
+                    # Name the reason: "fallback DNS" alone never explained why (D4).
+                    $log.Add("$domain -> no usable address ($reason, $($candidates.Count) candidates)")
+                }
             }
             $entry.items = $items
             $entry.ok = (@($items | Where-Object { $_.ok }).Count -gt 0)
             $entry.summary = (@($items | ForEach-Object {
-                if ($_.ok) { "$($_.domain) -> $($_.ip) ($($_.latency) ms)" } else { "$($_.domain) -> fallback DNS" }
+                if ($_.ok) { "$($_.domain) -> $($_.ip) ($($_.latency) ms)" } else { "$($_.domain) -> $($_.reason)" }
             }) -join ' | ')
         }
         $groups += $entry
@@ -2052,7 +1956,7 @@ if ($Action -eq 'cf-apply') {
             if ($parts.Count -ne 3) { $rejected++; continue }
             $tag = $parts[0].Trim(); $ip = $parts[1].Trim(); $domain = $parts[2].Trim()
             if ($tag -notmatch '^[A-Z0-9]{2,12}$') { $rejected++; continue }
-            if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { $rejected++; continue }
+            if (-not (Test-StrictIPv4 $ip)) { $rejected++; continue }
             if ($domain -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$') { $rejected++; continue }
             # The CF block may only ever hold official Cloudflare addresses: that domain set is
             # Cloudflare-fronted, so anything else would point it at an unrelated host. (This check

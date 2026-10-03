@@ -28,28 +28,37 @@ jobs:
 
       # The PowerShell backend must stay pure ASCII: Windows PowerShell 5.1 reads a BOM-less .ps1
       # as ANSI, so any non-ASCII byte mangles the script and breaks parsing.
-      - name: Verify optimization.ps1 is pure ASCII
+      - name: Verify PowerShell sources are pure ASCII
         shell: pwsh
         run: |
-          $bytes = [System.IO.File]::ReadAllBytes('scripts/optimization.ps1')
-          $bad = @($bytes | Where-Object { $_ -gt 127 })
-          if ($bad.Count -gt 0) {
-            Write-Error "scripts/optimization.ps1 contains $($bad.Count) non-ASCII byte(s)."
-            exit 1
+          $failed = $false
+          foreach ($file in @(Get-ChildItem scripts -Recurse -Filter *.ps1)) {
+            $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
+            $bad = @($bytes | Where-Object { $_ -gt 127 })
+            if ($bad.Count -gt 0) {
+              Write-Error "$($file.Name) contains $($bad.Count) non-ASCII byte(s)."
+              $failed = $true
+            } else {
+              Write-Host "$($file.Name) is pure ASCII ($($bytes.Length) bytes)."
+            }
           }
-          Write-Host "optimization.ps1 is pure ASCII ($($bytes.Length) bytes)."
+          if ($failed) { exit 1 }
 
-      - name: Parse-check optimization.ps1
+      - name: Parse-check PowerShell sources
         shell: pwsh
         run: |
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'scripts/optimization.ps1'), [ref]$null, [ref]$errors)
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          $failed = $false
+          foreach ($file in @(Get-ChildItem scripts -Recurse -Filter *.ps1)) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$($file.Name): $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "$($file.Name) parses cleanly."
+            }
           }
-          Write-Host "optimization.ps1 parses cleanly."
+          if ($failed) { exit 1 }
 
       - name: Check frontend JavaScript syntax
         shell: pwsh
@@ -58,9 +67,42 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Write-Host "app.js is valid JavaScript."
 
+      # The app ships the scripts as Tauri resources and optimization.ps1 dot-sources its helpers.
+      # A helper that is not listed here is simply absent from the installed copy, so the dot-source
+      # fails at runtime with "The term '...' is not recognized as the name of a cmdlet" -- a failure
+      # that no amount of local testing catches, because the source tree always has the file.
+      - name: Verify every bundled script is declared as a Tauri resource
+        shell: pwsh
+        run: |
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $declared = @($config.bundle.resources)
+          $failed = $false
+          foreach ($file in @(Get-ChildItem scripts -Filter *.ps1)) {
+            $expected = "../scripts/$($file.Name)"
+            if ($declared -notcontains $expected) {
+              Write-Error "$($file.Name) is missing from bundle.resources (expected '$expected')."
+              $failed = $true
+            } else {
+              Write-Host "$($file.Name) is declared as a resource."
+            }
+          }
+          if ($failed) { exit 1 }
+
+      # The IP/CIDR helpers live in scripts/ip-core.ps1 and the runner must pass under Windows
+      # PowerShell 5.1, which is the shell the app actually spawns.
+      - name: Run PowerShell tests
+        shell: powershell
+        run: |
+          & ./scripts/tests/run-tests.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Cargo check
         working-directory: src-tauri
         run: cargo check --release
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test
 
   # Attach the installer to a GitHub Release when a v* tag is pushed.
   release:

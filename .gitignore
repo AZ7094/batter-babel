@@ -28,3 +28,9 @@ Thumbs.db
 # Local config
 *.local
 .env
+
+# Exported design conversations are working notes, not project source
+*对话导出*.md
+
+# Promo video verification screenshots; the rendered mp4/gif and the generator are committed
+media/preview/
