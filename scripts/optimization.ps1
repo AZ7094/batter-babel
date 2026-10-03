@@ -597,6 +597,29 @@ function Get-GameTargets($Game) {
     return ConvertTo-GroupList $Game.OptGroups
 }
 
+# Concatenate two group lists, keeping the first occurrence of each label. Used to combine a game's
+# dedicated endpoints with the platform endpoints it also depends on, without duplicating the groups
+# they have in common. Cards are then grouped by tag, because a dedicated profile can otherwise
+# inject e.g. a CF group between two Steam ones (Terraria) and the list reads as if it were shuffled.
+function Merge-GroupLists($First, $Second) {
+    $all = @()
+    $seen = @{}
+    foreach ($source in @($First, $Second)) {
+        foreach ($g in @(ConvertTo-GroupList $source)) {
+            if (-not $g.label -or $seen.ContainsKey($g.label)) { continue }
+            $seen[$g.label] = $true
+            $all += $g
+        }
+    }
+    $tagOrder = @()
+    foreach ($g in $all) { if ($tagOrder -notcontains $g.tag) { $tagOrder += $g.tag } }
+    $out = @()
+    foreach ($t in $tagOrder) {
+        foreach ($g in $all) { if ($g.tag -eq $t) { $out += $g } }
+    }
+    return $out
+}
+
 # True when this game is recorded as boosted. Uses the local state file because reading the QoS
 # policy store requires elevation, which the app does not have while merely scanning.
 # Boot time is the cheapest way to tell whether an ActiveStore rule is still in force: that store
@@ -679,9 +702,11 @@ function Get-GameCachePath {
 }
 
 # Bump this whenever the cached game structure changes, so an old cache written by a previous version
-# is discarded instead of being rendered with the new UI. (Version 1 was the single-group platform
-# layout; version 2 splits platforms into login/CDN groups.)
-$GameCacheVersion = 2
+# is discarded instead of being rendered with the new UI.
+#   1 = platform targets as one merged group
+#   2 = platforms split into login / CDN groups
+#   3 = dedicated profiles merge with platform targets instead of replacing them
+$GameCacheVersion = 3
 
 function Read-GameCache([int]$MaxAgeHours = 24) {
     $path = Get-GameCachePath
@@ -769,13 +794,24 @@ function Get-OnlineGameList {
         # locally, so the picker labels it as a standalone client instead of "not installed".
         $standalone = $false
         if ($game.ContainsKey('Standalone')) { $standalone = [bool]$game.Standalone }
+        # A dedicated profile ADDS to the platform endpoints, it does not replace them: Limbus runs
+        # on Steam and CS2 signs in through Steam, so those platform endpoints are worth ranking
+        # alongside the game-specific ones. Previously a $Catalog entry suppressed the platform
+        # targets entirely, which silently dropped them.
+        $groups = @(Get-GameTargets $game)
+        if ($game.AppId) {
+            $platformGroups = @(Get-TargetsForPlatform -PlatformName (Get-PlatformForApp $game.AppId) -ExtraPlatforms @())
+            $groups = @(Merge-GroupLists $groups $platformGroups)
+        }
         $result += [ordered]@{
             id = $game.Id; appId = $game.AppId; name = $game.Name; vendor = $game.Vendor
             installed = $location.Installed; running = $location.Running
             executablePath = $location.ExecutablePath; source = $location.Source
             support = $true; online = $true; accelerated = (Test-GameBoosted $game.Id)
             helpsGameplay = $helpsGameplay; standalone = $standalone
-            optGroups = @(Get-GameTargets $game)
+            platform = $(if ($game.AppId) { Get-PlatformForApp $game.AppId } else { $null })
+            extraPlatforms = @()
+            optGroups = $groups
         }
     }
     # 2) installed titles that are known ONLINE games. Steam records no online/single-player flag
