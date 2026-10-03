@@ -141,7 +141,7 @@ const PROGRESS_ZH = [
   [/^Download test on (\d+) IPs \((\d+) curated \+ (\d+) learned \+ (\d+) fastest\)$/, '下载测速 $1 个 IP（精选 $2 + 已学习 $3 + 延迟最快 $4）'],
   [/^Cloudflare download test: (\d+)\/(\d+) IPs$/, 'Cloudflare 下载测速 $1/$2'],
   [/^Resolving (.+)$/, '解析 $1'],
-  [/^Probing (.+) \((\d+)\/(\d+)\)$/, '探测 $1 ($2/$3)'],
+  [/^Probing (.+) \((\d+)\/(\d+)\)$/, '探测 $1（$2/$3 轮）'],
   [/^Done$/, '完成'],
   [/^Snapshotting current settings$/, '读取当前设置'],
   [/^TCP low latency \(Nagle\)$/, 'TCP 低延迟（Nagle/延迟ACK）'],
@@ -525,7 +525,7 @@ async function optimize() {
   setProgress(15, '准备测速');
   startTimer('测速中');
   clearLog();
-  setStatus(`正在测速 ${currentGame.name} 的线路…（逐域名探测约需 30-60 秒，请稍候）`);
+  setStatus(`正在测速 ${currentGame.name} 的线路…（需 1-2 分钟，进度条会实时推进，请稍候）`);
   try {
     const data = await invokeAction({ action: 'cf-optimize', gameId: currentGame.id });
     appendLog(data.log || []);

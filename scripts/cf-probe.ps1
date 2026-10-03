@@ -141,6 +141,60 @@ function Get-ProbeCandidates {
 #   35 = SSL connect error          (TLS handshake failed)
 #   60 = SSL certificate problem    (certificate rejected)
 # https://curl.se/docs/manpage.html#EXITCODES
+# Turns the artifacts of one curl run (exit code, the -w line, the header/body files) into the
+# probe record Resolve-ProbeOutcome expects. The serial and the parallel transport share this, so
+# both report exactly the same fields and the judgement layer stays oblivious to how it was fetched.
+function ConvertTo-ProbeResult {
+    param(
+        [int]$ExitCode,
+        [string]$StatText,
+        [string]$HeadPath,
+        [string]$BodyPath,
+        [int]$MaxBodyBytes = 4096
+    )
+
+    $parts = ($StatText -join '') -split '\|'
+    $ttfb = 0.0
+    $status = 0
+    $size = 0
+    if ($parts.Count -ge 3) {
+        [void][double]::TryParse($parts[0], [ref]$ttfb)
+        [void][int]::TryParse($parts[1], [ref]$status)
+        [void][int]::TryParse($parts[2], [ref]$size)
+    }
+
+    $headers = ''
+    $body = ''
+    try {
+        if ($HeadPath -and (Test-Path -LiteralPath $HeadPath)) {
+            $headers = [System.IO.File]::ReadAllText($HeadPath, [System.Text.UTF8Encoding]::new($false))
+        }
+        if ($BodyPath -and (Test-Path -LiteralPath $BodyPath)) {
+            $bytes = [System.IO.File]::ReadAllBytes($BodyPath)
+            if ($MaxBodyBytes -gt 0 -and $bytes.Length -gt $MaxBodyBytes) {
+                $bytes = $bytes[0..($MaxBodyBytes - 1)]
+            }
+            $body = [System.Text.Encoding]::UTF8.GetString($bytes)
+        }
+    } catch {}
+
+    return [ordered]@{
+        exitCode = $ExitCode
+        statusCode = $status
+        elapsedMs = [math]::Round($ttfb * 1000, 0)
+        headers = $headers
+        body = $body
+        bodyBytes = $size
+    }
+}
+
+# Start-Process joins the argument array with spaces and there is no shell to re-split them, so an
+# argument containing whitespace (a temp path under "C:\Users\John Doe\...") has to be quoted here.
+function Format-CurlArg([string]$Value) {
+    if ($Value -match '\s') { return '"' + $Value + '"' }
+    return $Value
+}
+
 function Invoke-ProbeRequest {
     param(
         [string]$Domain,
@@ -159,46 +213,136 @@ function Invoke-ProbeRequest {
         $raw = & $curl --ssl-no-revoke --resolve "${Domain}:443:$Ip" "https://$Domain/" `
             -o $bodyFile -D $headFile -s -m $TimeoutSec `
             -w '%{time_starttransfer}|%{http_code}|%{size_download}' 2>$null
-        $exit = $LASTEXITCODE
-        $parts = ($raw -join '') -split '\|'
-        $ttfb = 0.0
-        $status = 0
-        $size = 0
-        if ($parts.Count -ge 3) {
-            [void][double]::TryParse($parts[0], [ref]$ttfb)
-            [void][int]::TryParse($parts[1], [ref]$status)
-            [void][int]::TryParse($parts[2], [ref]$size)
-        }
-
-        $headers = ''
-        $body = ''
-        try {
-            if (Test-Path -LiteralPath $headFile) {
-                $headers = [System.IO.File]::ReadAllText($headFile, [System.Text.UTF8Encoding]::new($false))
-            }
-            if (Test-Path -LiteralPath $bodyFile) {
-                $bytes = [System.IO.File]::ReadAllBytes($bodyFile)
-                if ($MaxBodyBytes -gt 0 -and $bytes.Length -gt $MaxBodyBytes) {
-                    $bytes = $bytes[0..($MaxBodyBytes - 1)]
-                }
-                $body = [System.Text.Encoding]::UTF8.GetString($bytes)
-            }
-        } catch {}
-
-        return [ordered]@{
-            exitCode = $exit
-            statusCode = $status
-            elapsedMs = [math]::Round($ttfb * 1000, 0)
-            headers = $headers
-            body = $body
-            bodyBytes = $size
-        }
+        return ConvertTo-ProbeResult -ExitCode $LASTEXITCODE -StatText ($raw -join '') `
+            -HeadPath $headFile -BodyPath $bodyFile -MaxBodyBytes $MaxBodyBytes
     } catch {
         return [ordered]@{ exitCode = -1; statusCode = 0; elapsedMs = 0; headers = ''; body = ''; bodyBytes = 0 }
     } finally {
         Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $headFile -Force -ErrorAction SilentlyContinue
     }
+}
+
+# ---------------------------------------------------------------------------------------------
+# Parallel transport
+# ---------------------------------------------------------------------------------------------
+# Every candidate of one round is launched at once and the whole round is waited on together.
+#
+# Why (measured on www.limbuscompanyapi.com, 12 candidates, 3 samples): the serial loop needed
+# 45.5s -- each healthy sample cost 0.7-2.8s and each unhealthy one the full 5s timeout -- which
+# both exhausted the per-domain deadline (6 of the 12 candidates were never probed at all, so the
+# "best" address was really "fastest among the ones DNS happened to list first") and left the UI
+# without a single progress update for that whole minute. A parallel round costs the SLOWEST single
+# request instead of the sum, and each finished round is a natural place to report progress.
+#
+# Windows PowerShell 5.1 has no ForEach-Object -Parallel, and runspace pools would drag the whole
+# module into session-state juggling, so the concurrency is plain child processes: one curl per
+# candidate, each writing its own -w line, header file and body file.
+function Start-ProbeRequest {
+    param(
+        [string]$Domain,
+        [string]$Ip,
+        [int]$TimeoutSec = 5,
+        [string]$WorkDir,
+        [int]$Index = 0
+    )
+
+    $curl = "$env:SystemRoot\System32\curl.exe"
+    $bodyFile = Join-Path $WorkDir "p$Index.body"
+    $headFile = Join-Path $WorkDir "p$Index.head"
+    $statFile = Join-Path $WorkDir "p$Index.stat"
+    $errFile = Join-Path $WorkDir "p$Index.err"
+
+    # ${Domain} braces are required: "$Domain`:443" would parse the colon as a scope separator.
+    $argList = @(
+        '--ssl-no-revoke'
+        '--resolve', "${Domain}:443:$Ip"
+        "https://$Domain/"
+        '-o', (Format-CurlArg $bodyFile)
+        '-D', (Format-CurlArg $headFile)
+        '-s'
+        '-m', "$TimeoutSec"
+        '-w', '%{time_starttransfer}|%{http_code}|%{size_download}'
+    )
+
+    $proc = Start-Process -FilePath $curl -ArgumentList $argList -NoNewWindow -PassThru `
+        -RedirectStandardOutput $statFile -RedirectStandardError $errFile
+
+    return [ordered]@{
+        ip = $Ip
+        proc = $proc
+        bodyFile = $bodyFile
+        headFile = $headFile
+        statFile = $statFile
+        timedOut = $false
+    }
+}
+
+# Runs one round over $Ips and returns an ordered map ip -> probe record.
+function Invoke-ProbeBatch {
+    param(
+        [string]$Domain,
+        [string[]]$Ips,
+        [int]$TimeoutSec = 5,
+        [int]$MaxBodyBytes = 4096
+    )
+
+    $out = [ordered]@{}
+    $targets = @($Ips)
+    if ($targets.Count -eq 0) { return $out }
+
+    $workDir = Join-Path $env:TEMP ("bb-probe-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+
+    try {
+        $states = @()
+        $index = 0
+        foreach ($ip in $targets) {
+            try {
+                $states += Start-ProbeRequest -Domain $Domain -Ip $ip -TimeoutSec $TimeoutSec -WorkDir $workDir -Index $index
+            } catch {
+                # A spawn failure must not abort the round: the candidate simply reports no response.
+                $states += [ordered]@{ ip = $ip; proc = $null; bodyFile = ''; headFile = ''; statFile = ''; timedOut = $false }
+            }
+            $index++
+        }
+
+        # ONE deadline for the whole round, evaluated from a single start point. curl also carries
+        # its own -m, so this only catches a process that never returns at all; waiting per process
+        # with a per-process timeout is what made the old latency screen take 211s (design note).
+        $roundDeadline = (Get-Date).AddSeconds($TimeoutSec + 8)
+        foreach ($st in $states) {
+            if (-not $st.proc) { continue }
+            try {
+                $remaining = [int][math]::Max(0, ($roundDeadline - (Get-Date)).TotalMilliseconds)
+                if (-not $st.proc.WaitForExit($remaining)) {
+                    try { $st.proc.Kill() } catch {}
+                    $st.timedOut = $true
+                }
+            } catch {}
+        }
+
+        foreach ($st in $states) {
+            $exit = -1
+            $stat = ''
+            if ($st.proc) {
+                try { $exit = $st.proc.ExitCode } catch { $exit = -1 }
+                # Killed by our own deadline => the same classification curl would have produced.
+                if ($st.timedOut) { $exit = 28 }
+                try {
+                    if ($st.statFile -and (Test-Path -LiteralPath $st.statFile)) {
+                        $stat = [System.IO.File]::ReadAllText($st.statFile, [System.Text.UTF8Encoding]::new($false))
+                    }
+                } catch {}
+            }
+            $out[$st.ip] = ConvertTo-ProbeResult -ExitCode $exit -StatText $stat `
+                -HeadPath $st.headFile -BodyPath $st.bodyFile -MaxBodyBytes $MaxBodyBytes
+        }
+    } finally {
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    return $out
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -268,51 +412,92 @@ function Get-ProbeMedian([double[]]$Values) {
 # Probes one domain across all its candidates and returns every result, ranked.
 # Usable first (by median), then Keep, then Unusable. Unusable entries are kept in the list so the
 # UI can explain why a domain fell back (D4) -- they are simply never written to hosts.
+#
+# Sampling is organised in ROUNDS, not per candidate: round 1 measures every candidate at once, and
+# each following round only re-measures the ones that still look usable. A candidate that fails
+# (or that is a Keep/anti-bot answer) stops immediately, exactly as before -- only the waiting is
+# shared now. $OnProgress is invoked after every round as ($workDone, $workTotal, $roundsDone).
 function Invoke-ProbeDomain {
     param(
         [string]$Domain,
         [string[]]$Candidates,
         [int]$Samples = 3,
         [int]$TimeoutSec = 5,
-        [int]$DeadlineSeconds = 45
+        [int]$DeadlineSeconds = 45,
+        [scriptblock]$OnProgress
     )
 
     $rule = Get-ProbeRule $Domain
     $deadline = (Get-Date).AddSeconds($DeadlineSeconds)
-    $results = @()
-    $completed = 0
+    $candidateList = @($Candidates)
+    $total = $candidateList.Count
 
-    foreach ($ip in @($Candidates)) {
+    # Per-candidate accumulators, keyed by address but reported back in candidate order.
+    $sampleTimes = @{}
+    $lastProbe = @{}
+    $lastOutcome = @{}
+    foreach ($ip in $candidateList) {
+        $sampleTimes[$ip] = @()
+        $lastProbe[$ip] = $null
+        $lastOutcome[$ip] = $null
+    }
+
+    $pending = @($candidateList)
+    # Progress is measured in WORK UNITS, not finished candidates: with three samples a candidate
+    # is only "finished" after the third round, so counting finished candidates would leave the bar
+    # frozen at its start value until the very last round. A candidate that stops early (failure or
+    # anti-bot answer) is credited its whole share at once, because that work really is over.
+    $workTotal = [math]::Max(1, $total * $Samples)
+    if ($OnProgress) { & $OnProgress 0 $workTotal 0 }
+    for ($round = 0; $round -lt $Samples -and $pending.Count -gt 0; $round++) {
         if ((Get-Date) -gt $deadline) {
-            $results += [ordered]@{
-                ip = $ip; verdict = 'Unusable'; reason = 'DeadlineExceeded'
-                medianMs = $null; samples = 0
+            foreach ($ip in $pending) {
+                $lastOutcome[$ip] = [ordered]@{ verdict = 'Unusable'; reason = 'DeadlineExceeded' }
             }
-            continue
+            $pending = @()
+            if ($OnProgress) { & $OnProgress $workTotal $workTotal ($round + 1) }
+            break
         }
 
-        $times = @()
-        $lastProbe = $null
-        $lastOutcome = $null
-        for ($s = 0; $s -lt $Samples; $s++) {
-            $probe = Invoke-ProbeRequest -Domain $Domain -Ip $ip -TimeoutSec $TimeoutSec -MaxBodyBytes $rule.MaxBodyBytes
+        $batch = Invoke-ProbeBatch -Domain $Domain -Ips $pending -TimeoutSec $TimeoutSec -MaxBodyBytes $rule.MaxBodyBytes
+
+        $stillPending = @()
+        foreach ($ip in $pending) {
+            $probe = $batch[$ip]
             $outcome = Resolve-ProbeOutcome -Probe $probe -Rule $rule
-            $lastProbe = $probe
-            $lastOutcome = $outcome
-            if ($outcome.verdict -ne 'Usable' -and $outcome.verdict -ne 'Keep') { break }
-            if ($probe.elapsedMs -gt 0) { $times += [double]$probe.elapsedMs }
+            $lastProbe[$ip] = $probe
+            $lastOutcome[$ip] = $outcome
+            # Unusable (and Keep) results are final after one sample: no point measuring an anti-bot
+            # page twice. Only candidates that may be written keep collecting samples.
+            if ($outcome.verdict -ne 'Usable' -and $outcome.verdict -ne 'Keep') { continue }
+            if ($probe.elapsedMs -gt 0) { $sampleTimes[$ip] += [double]$probe.elapsedMs }
+            if ($round + 1 -lt $Samples) { $stillPending += $ip }
         }
+        $pending = $stillPending
 
+        $workDone = 0
+        foreach ($ip in $candidateList) {
+            if ($stillPending -contains $ip) { $workDone += @($sampleTimes[$ip]).Count } else { $workDone += $Samples }
+        }
+        if ($OnProgress) { & $OnProgress $workDone $workTotal ($round + 1) }
+    }
+
+    $results = @()
+    foreach ($ip in $candidateList) {
+        $times = @($sampleTimes[$ip])
+        $probe = $lastProbe[$ip]
+        $outcome = $lastOutcome[$ip]
+        if (-not $outcome) { $outcome = [ordered]@{ verdict = 'Unusable'; reason = 'DeadlineExceeded' } }
         $results += [ordered]@{
             ip = $ip
-            verdict = $lastOutcome.verdict
-            reason = $lastOutcome.reason
+            verdict = $outcome.verdict
+            reason = $outcome.reason
             medianMs = (Get-ProbeMedian $times)
             samples = $times.Count
-            statusCode = $lastProbe.statusCode
+            statusCode = $(if ($probe) { $probe.statusCode } else { 0 })
         }
-        $completed++
     }
+    $completed = @($candidateList | Where-Object { @($sampleTimes[$_]).Count -gt 0 }).Count
 
     $ranked = @(
         $results | Where-Object { $_.verdict -eq 'Usable' } | Sort-Object { if ($_.medianMs -eq $null) { [double]::MaxValue } else { [double]$_.medianMs } }

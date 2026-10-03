@@ -1457,8 +1457,16 @@ function Test-CfDownloadSpeedBatch([string[]]$Ips, [int]$Bytes = 1000000, [int]$
                 $procs[$ip] = $p; $files[$ip] = $f; $errFiles[$ip] = $ef
             } catch { $procs[$ip] = $null; $files[$ip] = $f; $errFiles[$ip] = $ef }
         }
+        $batchDeadline = (Get-Date).AddSeconds($TimeoutSec + 3)
         foreach ($ip in $batch) {
-            if ($procs[$ip]) { try { $procs[$ip].WaitForExit(($TimeoutSec * 1000) + 3000) | Out-Null } catch {} }
+            if ($procs[$ip]) {
+                # ONE deadline for the whole batch, measured from a single start point. Waiting per
+                # process with a per-process timeout makes the batch cost the SUM of its members
+                # (2 x 11s here) instead of the slowest one, and the later IPs' stopwatch gets
+                # stretched while it waits. Same defect as the latency screen (see below).
+                $remaining = [int][math]::Max(0, ($batchDeadline - (Get-Date)).TotalMilliseconds)
+                try { $procs[$ip].WaitForExit($remaining) | Out-Null } catch {}
+            }
             $content = ''
             if (Test-Path -LiteralPath $files[$ip]) { $content = [System.IO.File]::ReadAllText($files[$ip]).Trim() }
             Remove-Item -LiteralPath $files[$ip] -Force -ErrorAction SilentlyContinue
@@ -1752,17 +1760,35 @@ if ($Action -eq 'cf-optimize') {
             # into one space-joined string.
             $domainList = @($g.Domains)
             $domainCount = [math]::Max(1, $domainList.Count)
+            # Samples per candidate. Named, because the progress text reports the round number out
+            # of this value and the two must not drift apart.
+            $probeSamples = 3
             $di = 0
             foreach ($domain in $domainList) {
-                Write-Tick ($start + [int](($end - $start) * $di / $domainCount)) "Resolving $domain"
+                # Each domain owns a slice of this group's progress band, so the bar keeps moving
+                # inside one slow domain instead of sitting still for a minute (which is exactly
+                # what made the window look frozen).
+                $sliceStart = $start + [int](($end - $start) * $di / $domainCount)
+                $sliceEnd = $start + [int](($end - $start) * ($di + 1) / $domainCount)
+                Write-Tick $sliceStart "Resolving $domain"
                 # Round-robin across system DNS and both DoH sources (fixes D1: the old fixed-order
                 # cap let system DNS take every slot, starving the DoH sources).
                 $discovered = Get-ProbeCandidates -Domain $domain
                 $candidates = @($discovered.ips)
-                Write-Tick ($start + [int](($end - $start) * $di / $domainCount)) "Probing $domain (0/$($candidates.Count))"
+                Write-Tick $sliceStart "Probing $domain (0/$probeSamples)"
+                # Called after every sampling round (see Invoke-ProbeDomain). GetNewClosure captures
+                # this domain's slice, name and sample count, so the callback stays valid after the
+                # loop variable moves on. The text deliberately keeps the "Probing <domain> (n/m)"
+                # shape the UI already localises, so the round readout works without a UI change.
+                $probeProgress = {
+                    param($done, $total, $rounds)
+                    $pct = $sliceStart
+                    if ($total -gt 0) { $pct = $sliceStart + [int](($sliceEnd - $sliceStart) * $done / $total) }
+                    Write-Tick $pct "Probing $domain ($rounds/$probeSamples)"
+                }.GetNewClosure()
                 # Per-domain rule + three-state verdict + real median over 3 samples (fixes D3/D5),
                 # with every failure classified instead of collapsing to $null (fixes D4).
-                $probeResult = Invoke-ProbeDomain -Domain $domain -Candidates $candidates -Samples 3
+                $probeResult = Invoke-ProbeDomain -Domain $domain -Candidates $candidates -Samples $probeSamples -OnProgress $probeProgress
 
                 $bestIp = $null; $bestLatency = $null; $verdict = 'Unusable'; $reason = 'NoCandidate'
                 if ($probeResult.best) {
