@@ -29,7 +29,9 @@
 
 ### 平台目标：检测到的游戏都能优选
 
-大多数游戏只会连那么几个平台服务，所以域名按**平台**定义（`$PlatformTargets`：Steam、Ubisoft、Epic、Blizzard、EA），检测到的游戏自动继承所属平台的目标。彩虹六号用育碧 Connect 的域名，SCP: SL 用 Steam 的。
+大多数游戏只会连那么几个平台服务，所以域名按**平台**定义（`$PlatformTargets`：Ubisoft、Epic、Blizzard、EA），检测到的游戏自动继承所属平台的目标。彩虹六号用育碧 Connect 的域名。
+
+**Steam 自身的域名不参与优选**（`api/login.steampowered.com`、Steam CDN）。大多数人本来就用加速器加速 Steam，而 Steam 下载速度的官方控制项是「设置 → 下载 → 下载区域」，优选这些域名没有意义。所以只有 Steam 域名的游戏（CS2、Hunt: Showdown 等）会显示为**无优选线路**——它们请用「**加速游戏**」（本机 QoS）来改善对局延迟。
 
 只有当游戏有**专属**域名值得优选时，才需要单独的 `$Catalog` 条目。`$OnlineGameIds`（约 83 个常见联网游戏）只是本地元数据没覆盖到时的兜底。
 

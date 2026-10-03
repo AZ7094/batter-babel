@@ -1,6 +1,6 @@
 [package]
 name = "batter-babel"
-version = "0.7.2"
+version = "0.8.0"
 description = "Windows game network optimisation: fast-CDN selection, hosts routing and QoS prioritisation"
 authors = ["Batter Babel contributors"]
 edition = "2021"

@@ -61,12 +61,12 @@ $Catalog = [ordered]@{
     }
     cs2 = @{
         # In-match traffic is UDP via Steam Datagram Relay to dynamically assigned servers: no
-        # domain is involved, so hosts ranking cannot touch it. Only the platform can be ranked.
+        # domain is involved, so hosts ranking cannot touch it. Steam's own endpoints are
+        # deliberately NOT ranked (see the note above $Catalog): most players already run a Steam
+        # accelerator, so there is nothing left to optimise here -- the QoS boost is the
+        # useful control for this title.
         Id = 'cs2'; Name = 'Counter-Strike 2'; AppId = '730'; Executable = 'cs2.exe'; RelativePath = 'game\bin\win64\cs2.exe'; Vendor = 'Steam'
-        OptGroups = @(
-            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('api.steampowered.com', 'login.steampowered.com') }
-            @{ Label = 'Steam CDN'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('steamcdn-a.akamaihd.net') }
-        )
+        OptGroups = @()
     }
     apex = @{
         # Match servers are assigned dynamically -> platform acceleration only.
@@ -78,28 +78,23 @@ $Catalog = [ordered]@{
     }
     hunt = @{
         # Match traffic is UDP to dynamically assigned Crytek servers; Crytek's own backend is a
-        # single address, so only Steam's platform endpoints can be ranked.
+        # single address. Steam endpoints are not ranked (see cs2), so the QoS boost is the control here.
         Id = 'hunt'; Name = 'Hunt: Showdown 1896'; AppId = '594650'; Executable = 'HuntGame.exe'; RelativePath = 'bin\win_x64\HuntGame.exe'; Vendor = 'Steam'
-        OptGroups = @(
-            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('api.steampowered.com', 'login.steampowered.com') }
-            @{ Label = 'Steam CDN'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('steamcdn-a.akamaihd.net') }
-        )
+        OptGroups = @()
     }
     dst = @{
         # Co-op survival. Klei's lobby/account services are multi-IP and CAN be ranked (finding and
         # joining sessions), but the session itself is P2P between players -> no domain involved.
-        Id = 'dst'; Name = "Don't Starve Together"; AppId = '322330'; Executable = 'dontstarve_steam_x64.exe'; RelativePath = 'bin64\dontstarve_steam_x64.exe'; Vendor = 'Steam'
+        Id = 'dst'; Name = "Don't Starve Together"; AppId = '322330'; Executable = 'dontstarve_steam_x64.exe'; RelativePath = 'bin64\dontstarve_steam_x64.exe'; Vendor = 'Steam / Klei'
         OptGroups = @(
             @{ Label = 'Klei lobby / account'; Tag = 'KLEI'; Mode = 'probe'; Domains = @('lobby.klei.com', 'accounts.klei.com', 'login.klei.com') }
-            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('api.steampowered.com', 'login.steampowered.com') }
         )
     }
     terraria = @{
-        # Co-op sandbox. Multiplayer is P2P (the host's own connection), so only Steam's platform
-        # services and the Cloudflare-fronted official site can be ranked.
-        Id = 'terraria'; Name = 'Terraria'; AppId = '105600'; Executable = 'Terraria.exe'; RelativePath = 'Terraria.exe'; Vendor = 'Steam'
+        # Co-op sandbox. Multiplayer is P2P (the host's own connection), so only the
+        # Cloudflare-fronted official site can be ranked.
+        Id = 'terraria'; Name = 'Terraria'; AppId = '105600'; Executable = 'Terraria.exe'; RelativePath = 'Terraria.exe'; Vendor = 'Steam / Re-Logic'
         OptGroups = @(
-            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Mode = 'probe'; Domains = @('api.steampowered.com', 'login.steampowered.com') }
             @{ Label = 'Official site / services'; Tag = 'CF'; Mode = 'probe'; Domains = @('terraria.org', 're-logic.com') }
         )
     }
@@ -390,13 +385,11 @@ function Get-SteamInstalledApps {
 # merged group made platform games look like they ranked less than profiled ones, even though the
 # domains were identical.
 $PlatformTargets = [ordered]@{
-    'Steam' = @{
-        Vendor = 'Steam'
-        Groups = @(
-            @{ Label = 'Steam API (login / startup)'; Tag = 'STEAM'; Domains = @('api.steampowered.com', 'login.steampowered.com') },
-            @{ Label = 'Steam CDN'; Tag = 'STEAM'; Domains = @('steamcdn-a.akamaihd.net') }
-        )
-    }
+    # Steam is deliberately absent. Steam's own endpoints (api/login.steampowered.com, its CDN) are
+    # not worth ranking here: almost everyone already runs a Steam accelerator, and Steam picks its
+    # download region from its own settings. Ranking them only added noise to every game that
+    # happens to be sold on Steam. Games whose ONLY endpoints would have been Steam's therefore end
+    # up with no optimisable targets -- they stay listed so the QoS boost is still reachable.
     'Ubisoft' = @{
         Vendor = 'Ubisoft Connect'
         Groups = @(
@@ -427,18 +420,20 @@ $PlatformTargets = [ordered]@{
     }
 }
 
-# Which platform a catalogue title belongs to. Steam is the default; only exceptions are listed.
-# Rockstar is deliberately absent: every one of its endpoints resolves to a single IP, so there is
-# nothing to rank (the game still shows up, just without routes).
+# Which platform a catalogue title belongs to. Only exceptions are listed -- everything else has no
+# extra platform client (see the note in $PlatformTargets about Steam being excluded on purpose).
+# Rockstar is absent too: every one of its endpoints resolves to a single IP, so there is nothing
+# to rank (such a game still shows up, just without routes).
 $GamePlatforms = @{
     '359550' = 'Ubisoft'    # Rainbow Six Siege
     '1938090' = 'Blizzard'  # Call of Duty (Battle.net launcher for many users)
-    '236390' = 'Steam'      # War Thunder (Steam + own launcher)
 }
 
+# Returns '' (not 'Steam') when a title has no known publisher client: Steam is no longer a ranked
+# platform, so there is nothing to inherit.
 function Get-PlatformForApp([string]$AppId) {
     if ($GamePlatforms.ContainsKey($AppId)) { return $GamePlatforms[$AppId] }
-    return 'Steam'
+    return ''
 }
 
 # A Steam game very often launches through the publisher's OWN client as well (Battlefield -> EA App,
@@ -706,7 +701,8 @@ function Get-GameCachePath {
 #   1 = platform targets as one merged group
 #   2 = platforms split into login / CDN groups
 #   3 = dedicated profiles merge with platform targets instead of replacing them
-$GameCacheVersion = 3
+#   4 = Steam endpoints removed entirely (see the note in $PlatformTargets)
+$GameCacheVersion = 4
 
 function Read-GameCache([int]$MaxAgeHours = 24) {
     $path = Get-GameCachePath
@@ -807,7 +803,7 @@ function Get-OnlineGameList {
             id = $game.Id; appId = $game.AppId; name = $game.Name; vendor = $game.Vendor
             installed = $location.Installed; running = $location.Running
             executablePath = $location.ExecutablePath; source = $location.Source
-            support = $true; online = $true; accelerated = (Test-GameBoosted $game.Id)
+            support = ($groups.Count -gt 0); online = $true; accelerated = (Test-GameBoosted $game.Id)
             helpsGameplay = $helpsGameplay; standalone = $standalone
             platform = $(if ($game.AppId) { Get-PlatformForApp $game.AppId } else { $null })
             extraPlatforms = @()
@@ -839,11 +835,13 @@ function Get-OnlineGameList {
         }
         if (-not $isOnline) { continue }   # single-player game or tool -> never listed
 
-        # Endpoints: the platform it ships on, PLUS any publisher client detected on disk -- a Steam
-        # copy of Battlefield still signs in through the EA App, so it needs both.
+        # Endpoints: whatever the game's own platform provides, PLUS any publisher client detected on
+        # disk -- a Steam copy of Battlefield still signs in through the EA App, so it needs both.
+        # The detection runs unconditionally now: with Steam no longer being a ranked platform, a
+        # "primary platform is Steam" test would never be true and would silently skip it.
         $platformName = Get-PlatformForApp $app.appId
         $extraPlatforms = @()
-        if ($platformName -eq 'Steam' -and $app.installPath) {
+        if ($app.installPath) {
             $extraPlatforms = @(Get-PlatformHintsFromDisk $app.installPath)
         }
         $platformGroups = @(Get-TargetsForPlatform -PlatformName $platformName -ExtraPlatforms $extraPlatforms)

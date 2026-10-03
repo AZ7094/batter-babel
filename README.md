@@ -29,7 +29,9 @@ This is the only mechanism that improves **match latency** (especially useful fo
 
 ### Platform targets: every detected game is optimisable
 
-Most games only talk to the same handful of platform services, so endpoints are defined **per platform** (`$PlatformTargets`: Steam, Ubisoft, Epic, Blizzard, EA) and every detected game inherits its platform's endpoints automatically. Rainbow Six Siege uses Ubisoft Connect's endpoints, SCP: SL uses Steam's.
+Most games only talk to the same handful of platform services, so endpoints are defined **per platform** (`$PlatformTargets`: Ubisoft, Epic, Blizzard, EA) and every detected game inherits its platform's endpoints automatically. Rainbow Six Siege uses Ubisoft Connect's endpoints.
+
+**Steam's own endpoints are not ranked** (`api/login.steampowered.com`, the Steam CDN). Almost everyone already runs a Steam accelerator, and the real control for Steam download speed is **Settings → Downloads → Download Region**, so ranking them adds nothing. Titles whose only endpoints would have been Steam's (CS2, Hunt: Showdown, …) therefore show **no routes** — use the **加速游戏** QoS boost for those instead.
 
 A separate `$Catalog` entry is only needed when a game has **its own** domains worth ranking. `$OnlineGameIds` (~83 well-known online games) is only a fallback for what the local metadata does not cover.
 

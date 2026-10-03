@@ -238,10 +238,21 @@ function renderPlaceholderCards() {
   const groups = (currentGame && currentGame.optGroups) || [];
   const notice = scopeNotice();
   if (!groups.length) {
-    cardsEl.innerHTML = notice + '<div class="card placeholder">该游戏暂无优选目标。</div>';
+    cardsEl.innerHTML = notice + '<div class="card placeholder">' + noTargetsHtml() + '</div>';
     return;
   }
   cardsEl.innerHTML = notice + groups.map(g => cardHtml(g.tag, g.label, (g.domains || []).join(' / '), '—', 'pending')).join('');
+}
+
+// Shown for games that end up with nothing to rank. Steam's own endpoints are no longer optimised
+// (almost everyone already runs a Steam accelerator, and Steam's download region is the real
+// control), so a Steam-only title legitimately has no routes left -- say so instead of leaving the
+// user wondering whether detection failed.
+function noTargetsHtml() {
+  return '<b>该游戏没有可优选的线路。</b><br>'
+    + '<span style="font-size:12px">Steam 自身的域名（登录 / 下载 CDN）已不再优选——大多数人本来就用加速器加速 Steam，'
+    + '而 Steam 下载速度的官方控制项是「设置 → 下载 → 下载区域」。<br>'
+    + '这个游戏请用「<b>加速游戏</b>」（本机 QoS 优先级）来改善对局延迟。</span>';
 }
 
 function renderResult(data) {
@@ -482,7 +493,7 @@ async function optimize() {
   lastResult = null;
   const groups = currentGame.optGroups || [];
   cardsEl.innerHTML = groups.map(g => cardHtml(g.tag, g.label, (g.domains || []).join(' / '), '测速中…', 'pending')).join('')
-    || '<div class="card placeholder">该游戏暂无优选目标。</div>';
+    || '<div class="card placeholder">' + noTargetsHtml() + '</div>';
   setProgress(15, '准备测速');
   startTimer('测速中');
   clearLog();
