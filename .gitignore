@@ -1,0 +1,30 @@
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Dependencies (legacy web build)
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Tauri installer output, in case it is ever bundled into the repo root
+batter-babel.exe
+uninstall.exe
+_up_/
+*.msi
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local config
+*.local
+.env

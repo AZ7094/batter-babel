@@ -1,0 +1,28 @@
+# Normalise line endings so Windows and non-Windows checkouts agree.
+* text=auto
+
+# PowerShell and batch files stay CRLF: Windows PowerShell 5.1 is happiest with them, and the
+# backend script is validated for pure-ASCII rather than line endings.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Everything else (Rust, JS, JSON, Markdown, YAML) uses LF.
+*.rs text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.py text eol=lf
+
+# Binary assets must never be touched.
+*.png binary
+*.ico binary
+*.exe binary
+*.dll binary
+Cargo.lock -diff linguist-generated

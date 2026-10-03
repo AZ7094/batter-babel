@@ -1,0 +1,27 @@
+[package]
+name = "batter-babel"
+version = "0.5.0"
+description = "Windows game network optimisation: fast-CDN selection, hosts routing and QoS prioritisation"
+authors = ["Batter Babel contributors"]
+edition = "2021"
+license = "MIT"
+readme = "../README.md"
+keywords = ["gaming", "latency", "network", "tauri", "windows"]
+categories = ["utility"]
+repository = "https://github.com/AZ7094/batter-babel"
+homepage = "https://github.com/AZ7094/batter-babel#readme"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Batter Babel</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="mark">B</span><span>Batter Babel</span><small>游戏网络优选</small></div>
+      <div class="status" id="status">就绪。选择游戏后点击「开始优选」。</div>
+    </header>
+
+    <section class="toolbar">
+      <div class="row">
+        <label class="pick">
+          <span>游戏</span>
+          <select id="game-select"><option>正在检测…</option></select>
+        </label>
+        <button class="primary" id="optimize">开始优选</button>
+        <button class="secondary" id="write-hosts" disabled>写入 hosts</button>
+        <button class="secondary" id="restore-hosts">还原 hosts</button>
+        <button class="secondary" id="boost-game" disabled>加速游戏</button>
+      </div>
+      <div class="row">
+        <div class="progress">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <span class="progress-text" id="progress-text">等待开始</span>
+        </div>
+        <div class="tune-actions">
+          <button class="secondary ghost" id="tune-system">系统调优</button>
+          <button class="secondary ghost" id="restore-tune">还原系统调优</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="hints">
+      <p>开始优选：测试所选游戏的 CDN / API 线路，测速过程不会修改 hosts。</p>
+      <p>写入 hosts：将优选结果应用到系统 hosts，需要同意管理员授权。</p>
+      <p class="danger">还原 hosts：如果应用后遇到问题，请点击此按钮恢复最近一次备份。</p>
+    </section>
+
+    <section class="cards" id="cards">
+      <div class="card placeholder">选择游戏并开始优选后，这里会显示结果。</div>
+    </section>
+
+    <footer class="hosts-path" id="hosts-path">hosts: C:\Windows\System32\drivers\etc\hosts</footer>
+
+    <section class="log">
+      <div class="log-head">运行日志</div>
+      <div class="log-body" id="log" aria-live="polite">
+        <div class="log-line">就绪。等待开始。</div>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

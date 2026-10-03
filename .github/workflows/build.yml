@@ -1,0 +1,108 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Compile check on every push and pull request, so a broken build is caught before a release.
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # The PowerShell backend must stay pure ASCII: Windows PowerShell 5.1 reads a BOM-less .ps1
+      # as ANSI, so any non-ASCII byte mangles the script and breaks parsing.
+      - name: Verify optimization.ps1 is pure ASCII
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes('scripts/optimization.ps1')
+          $bad = @($bytes | Where-Object { $_ -gt 127 })
+          if ($bad.Count -gt 0) {
+            Write-Error "scripts/optimization.ps1 contains $($bad.Count) non-ASCII byte(s)."
+            exit 1
+          }
+          Write-Host "optimization.ps1 is pure ASCII ($($bytes.Length) bytes)."
+
+      - name: Parse-check optimization.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/optimization.ps1'), [ref]$null, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "optimization.ps1 parses cleanly."
+
+      - name: Check frontend JavaScript syntax
+        shell: pwsh
+        run: |
+          node --check src/public/app.js
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Host "app.js is valid JavaScript."
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check --release
+
+  # Attach the installer to a GitHub Release when a v* tag is pushed.
+  release:
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Batter Babel ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false
+          releaseBody: |
+            ## 下载 / Download
+
+            下载下方的 **`Batter Babel_x.x.x_x64-setup.exe`** 并运行。
+
+            系统要求：Windows 10/11 64 位（自带 WebView2，Win11 已内置）。
+            安装包约 1.1 MB，无需管理员权限即可安装（加速功能会在使用时单独请求授权）。
+
+            ### 它做什么 / 不做什么
+
+            - ✅ 优选 Cloudflare / CloudFront 线路并写入 `hosts`，加速**游戏平台服务**（登录、更新、大厅、好友、商店）
+            - ✅ 本机 QoS（DSCP 46）给游戏进程更高网络优先级
+            - ✅ 一键系统网络调优（可选，全部可还原）
+            - ❌ **不改善游戏内延迟**：对局走 UDP 直连服务器或 P2P，不经过域名
+            - ❌ **不加速游戏内下载**（地图 / mod / 存档同步）
+            - ❌ 不使用代理节点，不接管 DNS，不修改 `hosts` 标记块以外的任何内容
+
+            详见 [README](https://github.com/${{ github.repository }}#readme)。
