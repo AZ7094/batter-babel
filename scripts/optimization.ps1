@@ -367,7 +367,12 @@ function Get-SteamInstalledApps {
                 $installDir = [regex]::Match($content, '"installdir"\s*"(?<v>[^"]+)"').Groups['v'].Value
                 if ($appId -and $name -and -not $seen.ContainsKey($appId)) {
                     $seen[$appId] = $true
-                    $apps += [ordered]@{ appId = $appId; name = $name; installDir = $installDir }
+                    $installPath = $null
+                    if ($installDir) {
+                        $candidate = Join-Path (Join-Path $library 'steamapps\common') $installDir
+                        if (Test-Path -LiteralPath $candidate) { $installPath = $candidate }
+                    }
+                    $apps += [ordered]@{ appId = $appId; name = $name; installDir = $installDir; installPath = $installPath }
                 }
             } catch {}
         }
@@ -415,6 +420,53 @@ $GamePlatforms = @{
 function Get-PlatformForApp([string]$AppId) {
     if ($GamePlatforms.ContainsKey($AppId)) { return $GamePlatforms[$AppId] }
     return 'Steam'
+}
+
+# A Steam game very often launches through the publisher's OWN client as well (Battlefield -> EA App,
+# Rainbow Six -> Ubisoft Connect, many titles -> Epic Online Services). Those services have their own
+# rankable endpoints, so the game should get their targets too -- and this is detected from the
+# game's own folder, which needs no network and no hand-maintained list.
+# Only the top level is inspected: the markers are launcher folders, so a deep walk would be slow
+# for nothing.
+function Get-PlatformHintsFromDisk([string]$InstallPath) {
+    $hints = @()
+    if (-not $InstallPath -or -not (Test-Path -LiteralPath $InstallPath)) { return $hints }
+    try {
+        $top = @(Get-ChildItem -LiteralPath $InstallPath -ErrorAction SilentlyContinue)
+        $names = @($top | ForEach-Object { $_.Name })
+        # EA: Origin-era games ship "__Installer"; newer ones ship an EA anticheat / desktop folder.
+        foreach ($n in $names) {
+            if ($n -eq '__Installer' -or $n -match '^(EAAntiCheat|EA Desktop|Origin|EA SPORTS)') { $hints += 'EA'; break }
+        }
+        foreach ($n in $names) {
+            if ($n -match '^(Ubisoft|Uplay|UbisoftGameLauncher)') { $hints += 'Ubisoft'; break }
+        }
+        foreach ($n in $names) {
+            if ($n -match '^Epic' -or $n -eq 'EOSSDK') { $hints += 'Epic'; break }
+        }
+        foreach ($n in $names) {
+            if ($n -match '^Battle\.net' -or $n -match '^Blizzard') { $hints += 'Blizzard'; break }
+        }
+    } catch {}
+    return @($hints | Select-Object -Unique)
+}
+
+# All endpoint groups for one game: its primary platform first, then any additional publisher
+# client detected on disk.
+function Get-TargetsForPlatform {
+    param([string]$PlatformName, [string[]]$ExtraPlatforms = @())
+    $groups = @(Get-PlatformTargets $PlatformName)
+    $seenTags = @{}
+    foreach ($g in $groups) { $seenTags[$g.Tag] = $true }
+    foreach ($extra in @($ExtraPlatforms)) {
+        if (-not $extra -or $extra -eq $PlatformName) { continue }
+        foreach ($g in @(Get-PlatformTargets $extra)) {
+            if ($seenTags.ContainsKey($g.Tag)) { continue }
+            $seenTags[$g.Tag] = $true
+            $groups += $g
+        }
+    }
+    return $groups
 }
 
 function Get-PlatformTargets([string]$PlatformName) {
@@ -659,11 +711,17 @@ function Get-OnlineGameList {
         }
         if (-not $isOnline) { continue }   # single-player game or tool -> never listed
 
-        # Optimisable? Inherit the endpoints of the platform it ships on.
+        # Endpoints: the platform it ships on, PLUS any publisher client detected on disk -- a Steam
+        # copy of Battlefield still signs in through the EA App, so it needs both.
         $platformName = Get-PlatformForApp $app.appId
-        $platformGroups = @(Get-PlatformTargets $platformName)
+        $extraPlatforms = @()
+        if ($platformName -eq 'Steam' -and $app.installPath) {
+            $extraPlatforms = @(Get-PlatformHintsFromDisk $app.installPath)
+        }
+        $platformGroups = @(Get-TargetsForPlatform -PlatformName $platformName -ExtraPlatforms $extraPlatforms)
         $vendorName = 'Steam'
         if ($PlatformTargets.Contains($platformName)) { $vendorName = $PlatformTargets[$platformName].Vendor }
+        if ($extraPlatforms.Count -gt 0) { $vendorName = "$vendorName + $($extraPlatforms -join ' / ')" }
         $displayName = $app.name
         if ($OnlineGameIds.ContainsKey($app.appId)) { $displayName = $OnlineGameIds[$app.appId] }
         $result += [ordered]@{
@@ -676,6 +734,7 @@ function Get-OnlineGameList {
             online = $true; recognized = $true
             accelerated = $false; helpsGameplay = $false; standalone = $false
             platform = $platformName
+            extraPlatforms = $extraPlatforms
             optGroups = $platformGroups
         }
     }

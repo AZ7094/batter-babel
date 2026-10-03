@@ -356,7 +356,13 @@ function onGameChange() {
   }
   renderPlaceholderCards();
   if (currentGame.platform && !currentGame.helpsGameplay) {
-    setStatus(`已选择 ${currentGame.name}（${currentGame.vendor}）：优选将加速该平台的登录 / 更新 / 好友等服务。`);
+    // A Steam copy of a publisher game gets both endpoint sets; name both so the user can see what
+    // is actually being ranked.
+    const extras = (currentGame.extraPlatforms || []).filter(Boolean);
+    const platformLabel = extras.length
+      ? `${currentGame.platform} + ${extras.join(' + ')}`
+      : currentGame.platform;
+    setStatus(`已选择 ${currentGame.name}（${platformLabel} 平台）：优选将加速该平台的登录 / 更新 / 好友等服务。`);
   } else if (!currentGame.helpsGameplay) {
     setStatus(`已选择 ${currentGame.name}：优选只加速游戏平台与官方服务，无法改善游戏内延迟。`);
   } else {
