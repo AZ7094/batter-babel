@@ -852,7 +852,8 @@ function Get-GameCachePath {
 #   3 = dedicated profiles merge with platform targets instead of replacing them
 #   4 = Steam endpoints removed entirely (see the note in $PlatformTargets)
 #   5 = non-Steam stores scanned too (Epic / Ubisoft / EA / GOG / Battle.net / Microsoft Store)
-$GameCacheVersion = 5
+#   6 = games carry installPath so a stale cache entry can be detected
+$GameCacheVersion = 6
 
 function Read-GameCache([int]$MaxAgeHours = 24) {
     $path = Get-GameCachePath
@@ -953,6 +954,7 @@ function Get-OnlineGameList {
             id = $game.Id; appId = $game.AppId; name = $game.Name; vendor = $game.Vendor
             installed = $location.Installed; running = $location.Running
             executablePath = $location.ExecutablePath; source = $location.Source
+            installPath = $location.ExecutablePath
             support = ($groups.Count -gt 0); online = $true; accelerated = (Test-GameBoosted $game.Id)
             helpsGameplay = $helpsGameplay; standalone = $standalone
             platform = $(if ($game.AppId) { Get-PlatformForApp $game.AppId } else { $null })
@@ -1009,6 +1011,7 @@ function Get-OnlineGameList {
             vendor = $vendorName
             installed = $true; running = $false
             executablePath = $null; source = 'Steam library'
+            installPath = $app.installPath
             support = ($platformGroups.Count -gt 0)
             online = $true; recognized = $true
             accelerated = $false; helpsGameplay = $false; standalone = $false
@@ -1038,6 +1041,7 @@ function Get-OnlineGameList {
             vendor = $tpVendor
             installed = $true; running = $false
             executablePath = $null; source = $tp.source
+            installPath = $tp.installPath
             support = ($tpGroups.Count -gt 0)
             online = $true; recognized = $true
             accelerated = $false; helpsGameplay = $false; standalone = $true
@@ -1913,19 +1917,27 @@ if ($Action -eq 'scan' -or $Action -eq 'scan-force') {
     if ($useCache) {
         $cached = Read-GameCache
         if ($cached) {
-            $cachedGames = @($cached.games)
-            foreach ($cg in $cachedGames) {
+            $cachedGames = @()
+            $dropped = 0
+            foreach ($cg in @($cached.games)) {
+                # Drop entries whose install path is gone: serving a game the user has uninstalled
+                # would be wrong, and the same check also protects against stale test data.
+                if ($cg.installPath -and -not (Test-Path -LiteralPath $cg.installPath)) { $dropped++; continue }
                 if ($cg.id) { $cg.accelerated = Test-GameBoosted $cg.id }
+                $cachedGames += $cg
             }
-            Write-Result @{
-                ok = $true
-                games = $cachedGames
-                qos = $cached.qos
-                cached = $true
-                scannedAt = $cached.savedAt
-                protectedRoute = 'Local Windows QoS only. No proxy nodes, hosts changes, or DNS takeover.'
+            if ($dropped -eq 0) {
+                Write-Result @{
+                    ok = $true
+                    games = $cachedGames
+                    qos = $cached.qos
+                    cached = $true
+                    scannedAt = $cached.savedAt
+                    protectedRoute = 'Local Windows QoS only. No proxy nodes, hosts changes, or DNS takeover.'
+                }
+                exit 0
             }
-            exit 0
+            # Something on disk changed -- fall through and rescan rather than serving a stale list.
         }
     }
     $freshGames = @(Get-OnlineGameList)
