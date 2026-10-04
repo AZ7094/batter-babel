@@ -653,9 +653,12 @@ async function tuneSystem() {
   appendLog('=== 系统调优 ===');
   try {
     // The tune button is deliberately available with no game selected -- the UI offers 系统调优 as
-    // the fallback when a game has no QoS profile -- so an empty id keeps the generic tuning path
-    // working instead of throwing on currentGame.id.
-    const data = await invokeAction({ action: 'tune-system', gameId: currentGame ? currentGame.id : '' });
+    // the fallback when a game has no QoS profile -- so the generic path must send no gameId at
+    // all. The backend rejects an empty string (is_valid_game_id requires a non-empty id), while an
+    // absent key arrives as None and skips the check, which is how this worked before.
+    const payload = { action: 'tune-system' };
+    if (currentGame) payload.gameId = currentGame.id;
+    const data = await invokeAction(payload);
     for (const item of (data.items || [])) {
       appendLog(`${item.ok ? '[OK]' : '[!]'} ${item.title}: ${item.detail}`);
     }

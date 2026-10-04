@@ -238,6 +238,14 @@ function Merge-ManagedBlock {
     $all = @($NetBlockStart) + $body + @($NetBlockEnd)
     $block = ($all -join "`r`n") + "`r`n"
 
+    if ($hasStart -and $text.IndexOf($NetBlockEnd, $text.IndexOf($NetBlockStart)) -lt 0) {
+        # Both markers exist, but the end marker never follows the start marker. This app never
+        # writes that order, so there is no way to tell which text belongs inside the block. Return
+        # the file exactly as it arrived instead of splicing from a -1 offset, which used to
+        # duplicate a mangled chunk of the user's config and grow a second, unbalanced marker pair.
+        return $original
+    }
+
     if (-not $hasStart) {
         if ($text.Length -gt 0 -and -not $text.EndsWith("`r`n")) { $text += "`r`n" }
         return $text + $block
@@ -266,6 +274,11 @@ function Remove-ManagedBlock {
     $end = $text.IndexOf($NetBlockEnd, $start)
     $after = $end + $NetBlockEnd.Length
     if ($after + 2 -le $text.Length -and $text.Substring($after, 2) -eq "`r`n") { $after += 2 }
+    if ($end -lt 0) {
+        # The end marker only appears before the start marker, so this is not a block this app
+        # wrote. Return the file untouched rather than splicing from a -1 offset.
+        return $original
+    }
     return $text.Substring(0, $start) + $text.Substring($after)
 }
 

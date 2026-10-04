@@ -8,7 +8,8 @@ Assert-Equal 'latency,throughput' ((Get-NetTierIds) -join ',') 'exactly two tier
 Assert-Equal 'normal' (Get-NetTier 'latency').AutoTuning 'latency uses normal autotuning'
 Assert-Equal 'normal' (Get-NetTier 'throughput').AutoTuning 'throughput uses normal autotuning'
 Assert-Equal 'Restore' (Get-NetTier 'throughput').Nagle 'throughput restores Nagle'
-Assert-Equal $true (Get-NetTier 'latency').Nagle 'latency disables Nagle'
+Assert-True ((Get-NetTier 'latency').Nagle -is [bool]) 'latency Nagle is a boolean, not the Restore sentinel'
+Assert-True ((Get-NetTier 'latency').Nagle -eq $true) 'latency disables Nagle'
 Assert-Equal 'latency' (Get-NetRecipe 'cs2').Tier 'cs2 uses the latency tier'
 Assert-Equal 'throughput' (Get-NetRecipe 'limbus').Tier 'limbus uses the throughput tier'
 Assert-Equal 4 (Get-NetRecipe 'cs2').ExecutableParentDepth 'cs2 install root depth'
@@ -16,7 +17,7 @@ Assert-Equal 1 (Get-NetRecipe 'cs2').ConfigFiles.Count 'cs2 has one config file'
 Assert-Equal 'game\csgo\cfg\autoexec.cfg' (Get-NetRecipe 'cs2').ConfigFiles[0].RelativePath 'cs2 config path'
 Assert-Equal 4 (Get-NetRecipe 'cs2').ConfigFiles[0].Lines.Count 'cs2 managed block is four lines'
 Assert-True ((Get-NetRecipe 'cs2').ConfigFiles[0].Lines -contains 'cl_allow_animated_avatars 0') 'cs2 keeps the verified non-network tweak'
-Assert-Equal $true (Get-NetRecipe 'cs2').HasSurface 'cs2 reports a config surface'
+Assert-True ((Get-NetRecipe 'cs2').HasSurface -is [bool] -and (Get-NetRecipe 'cs2').HasSurface) 'cs2 reports a config surface'
 Assert-Equal 'latency' (Get-NetRecipe 'steam-4001890').Tier 'unknown game falls back to latency'
 Assert-Equal 0 (Get-NetRecipe 'steam-4001890').ConfigFiles.Count 'unknown game has no config file'
 Assert-Equal $false (Get-NetRecipe 'steam-4001890').HasSurface 'unknown game reports no surface'
@@ -29,7 +30,8 @@ $down = Get-NetTierDelta 'latency' 'throughput'
 Assert-True ($down.Restore -contains 'Nagle') 'latency to throughput restores Nagle'
 Assert-True (-not ($down.Set -contains 'Nagle')) 'latency to throughput does not set Nagle'
 Assert-True ($down.Set -contains 'InterruptModeration') 'latency to throughput sets interrupt moderation'
-Assert-True (-not ($down.Set -contains 'Eee')) 'unchanged keys stay out of the delta'
+Assert-True (-not ($down.Set -contains 'Eee')) 'unchanged keys stay out of the set list'
+Assert-True (-not ($down.Restore -contains 'Eee')) 'unchanged keys stay out of the restore list'
 
 $up = Get-NetTierDelta 'throughput' 'latency'
 Assert-True ($up.Set -contains 'Nagle') 'throughput to latency sets Nagle'
@@ -60,6 +62,16 @@ Assert-Equal 1 ([regex]::Matches($replaced, [regex]::Escape('// >>> Batter Babel
 $half = "// >>> Batter Babel >>>`r`ncl_allow_animated_avatars 0`r`n"
 Assert-Equal $half (Merge-ManagedBlock $half $lines) 'incomplete markers are untouched on merge'
 Assert-Equal $half (Remove-ManagedBlock $half) 'incomplete markers are untouched on remove'
+
+# The end marker can also sit BEFORE the start marker: a hand-edited file, or one an earlier build
+# damaged. Both transforms used to splice from IndexOf(end, start) == -1, which duplicated a
+# mangled chunk of the user's file and grew a second, unbalanced pair of markers, so both of them
+# must now hand such a file back exactly as it arrived.
+$reversed = "bind f1 noclip`r`n// <<< Batter Babel <<<`r`nbind f2 noclip`r`n// >>> Batter Babel >>>`r`ncl_allow_animated_avatars 0`r`nbind f3 noclip"
+Assert-True ((Remove-ManagedBlock $reversed) -ceq $reversed) 'reversed markers are untouched on remove'
+Assert-True ((Merge-ManagedBlock $reversed $lines) -ceq $reversed) 'reversed markers are untouched on merge'
+Assert-Equal 1 ([regex]::Matches((Merge-ManagedBlock $reversed $lines), [regex]::Escape('// >>> Batter Babel >>>')).Count) 'reversed markers do not grow a second block'
+Assert-True (Test-HasManagedBlock $reversed) 'a reversed pair still reports both markers present'
 Assert-Equal "host_writeconfig`r`n" (Remove-ManagedBlock $merged) 'remove strips the block and keeps the rest'
 Assert-Equal "host_writeconfig`r`n" (Remove-ManagedBlock "host_writeconfig`r`n") 'remove leaves a file with no block unchanged'
 Assert-Equal '' (Remove-ManagedBlock $null) 'remove tolerates null'
