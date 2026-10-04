@@ -1657,11 +1657,13 @@ function Load-TuneState {
 }
 # --- Per-game network tier: the imperative half the pure plan cannot own ---
 
-# Put one logical tier key back to the value captured in the snapshot. Returns a human note and
-# never throws: a restore that fails must leave the rest of the run intact.
+# Put one logical tier key back to the value captured in the snapshot. Returns a hashtable with an
+# explicit Ok flag and a human Note, and never throws: a restore that fails must leave the rest of
+# the run intact. Ok is false whenever nothing was actually put back, so explaining why a restore
+# could not run can never be rendered as a success.
 function Restore-TuneKey {
     param([string]$Key, $State)
-    if ($null -eq $State) { return "no snapshot available, so $Key was left as it is" }
+    if ($null -eq $State) { return @{ Ok = $false; Note = "no snapshot available, so $Key was left as it is" } }
     try {
         $adapterKeywords = @{
             'InterruptModeration' = '*InterruptModeration'
@@ -1680,7 +1682,8 @@ function Restore-TuneKey {
                     $restored++
                 }
             }
-            return "restored $kw on $restored adapter(s)"
+            if ($restored -eq 0) { return @{ Ok = $false; Note = "no snapshot value for $kw, so it was left as it is" } }
+            return @{ Ok = $true; Note = "restored $kw on $restored adapter(s)" }
         }
         switch ($Key) {
             'Nagle' {
@@ -1702,19 +1705,22 @@ function Restore-TuneKey {
                         $restored++
                     }
                 }
-                return "restored $restored Nagle value(s)"
+                if ($restored -eq 0) { return @{ Ok = $false; Note = 'no snapshotted interface is present, so Nagle was left as it is' } }
+                return @{ Ok = $true; Note = "restored $restored Nagle value(s)" }
             }
             'AutoTuning' {
                 $old = $State.tcpGlobal.autotuninglevel
-                if ($null -eq $old -or "$old" -eq '') { return 'autotuning had no original value' }
+                if ($null -eq $old -or "$old" -eq '') { return @{ Ok = $false; Note = 'autotuning had no original value' } }
                 & netsh int tcp set global "autotuninglevel=$old" 2>&1 | Out-Null
-                return "autotuning restored to $old"
+                $code = $LASTEXITCODE
+                return @{ Ok = ($code -eq 0); Note = "autotuning restored to $old (netsh exit $code)" }
             }
             'Rss' {
                 $old = $State.tcpGlobal.rss
-                if ($null -eq $old -or "$old" -eq '') { return 'rss had no original value' }
+                if ($null -eq $old -or "$old" -eq '') { return @{ Ok = $false; Note = 'rss had no original value' } }
                 & netsh int tcp set global "rss=$old" 2>&1 | Out-Null
-                return "rss restored to $old"
+                $code = $LASTEXITCODE
+                return @{ Ok = ($code -eq 0); Note = "rss restored to $old (netsh exit $code)" }
             }
             'Throttling' {
                 $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
@@ -1725,8 +1731,8 @@ function Restore-TuneKey {
                     Set-ItemProperty -Path $regPath -Name $name -Value ([int]$old) -Type DWord -ErrorAction Stop
                     $done += "$name=$old"
                 }
-                if ($done.Count -eq 0) { return 'throttling had no original values' }
-                return "throttling restored: $($done -join ', ')"
+                if ($done.Count -eq 0) { return @{ Ok = $false; Note = 'throttling had no original values' } }
+                return @{ Ok = $true; Note = "throttling restored: $($done -join ', ')" }
             }
             'AdapterPower' {
                 $restored = 0
@@ -1735,20 +1741,33 @@ function Restore-TuneKey {
                     Set-NetAdapterPowerManagement -Name $prop.Name -AllowComputerToTurnOffDevice "$($prop.Value)" -ErrorAction Stop
                     $restored++
                 }
-                return "adapter power restored on $restored adapter(s)"
+                if ($restored -eq 0) { return @{ Ok = $false; Note = 'adapter power had no original values' } }
+                return @{ Ok = $true; Note = "adapter power restored on $restored adapter(s)" }
             }
             'WifiPower' {
                 $ac = $State.wifiPower.ac
                 $dc = $State.wifiPower.dc
-                if ($null -ne $ac -and "$ac" -ne '') { & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a "$ac" 2>$null | Out-Null }
-                if ($null -ne $dc -and "$dc" -ne '') { & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a "$dc" 2>$null | Out-Null }
+                # The snapshot holds the hex digits powercfg printed, while setacvalueindex takes a
+                # decimal index, so 0x10 has to go back as 16 rather than as 10.
+                $codes = @()
+                if ($null -ne $ac -and "$ac" -ne '') {
+                    & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a ([Convert]::ToInt32("$ac", 16)) 2>$null | Out-Null
+                    $codes += $LASTEXITCODE
+                }
+                if ($null -ne $dc -and "$dc" -ne '') {
+                    & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a ([Convert]::ToInt32("$dc", 16)) 2>$null | Out-Null
+                    $codes += $LASTEXITCODE
+                }
+                if ($codes.Count -eq 0) { return @{ Ok = $false; Note = 'wifi power had no original values' } }
                 & powercfg /setactive SCHEME_CURRENT 2>$null | Out-Null
-                return "wifi power restored (ac=$ac dc=$dc)"
+                $codes += $LASTEXITCODE
+                $failed = @($codes | Where-Object { $_ -ne 0 })
+                return @{ Ok = ($failed.Count -eq 0); Note = "wifi power restored (ac=$ac dc=$dc)" }
             }
-            default { return "no snapshot restore is implemented for $Key, skipped" }
+            default { return @{ Ok = $false; Note = "no snapshot restore is implemented for $Key, skipped" } }
         }
     } catch {
-        return "restoring $Key failed: $($_.Exception.Message)"
+        return @{ Ok = $false; Note = "restoring $Key failed: $($_.Exception.Message)" }
     }
 }
 
@@ -1774,11 +1793,13 @@ function Invoke-TuneTier {
                 $kw = $adapterTargets[$key].kw
                 $wanted = [int]$adapterTargets[$key].wanted
                 $changed = @()
+                $exposed = 0
                 foreach ($adapter in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
                     $prop = Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $kw -ErrorAction SilentlyContinue
                     if (-not $prop) { continue }
                     $valid = @(@($prop.ValidRegistryValues) | Sort-Object { [int]$_ })
                     if ($valid.Count -eq 0) { continue }
+                    $exposed++
                     # The tier speaks in intent (0 = off, 1 = on), but drivers publish their own value
                     # sets, so map it onto the smallest valid value for off and the largest for on.
                     $target = $valid[0]
@@ -1789,9 +1810,12 @@ function Invoke-TuneTier {
                         $changed += "$($adapter.Name)=$target"
                     }
                 }
-                $item.ok = $true
+                # A run where no adapter exposes the keyword applied nothing, so it must not report
+                # success. "Already at the tier value" on the other hand is a real outcome.
+                $item.ok = ($exposed -gt 0)
                 if ($changed.Count -gt 0) { $item.detail = "changed: $($changed -join ', ')" }
-                else { $item.detail = 'already at the tier value, or the driver does not expose it' }
+                elseif ($exposed -eq 0) { $item.detail = "skipped: no adapter exposes $kw" }
+                else { $item.detail = "already at the tier value on $exposed adapter(s)" }
             } else {
                 switch ($key) {
                     'Nagle' {
@@ -1846,10 +1870,16 @@ function Invoke-TuneTier {
                     'WifiPower' {
                         $wifi = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.MediaType -eq 'Native 802.11' })
                         & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
+                        $acCode = $LASTEXITCODE
                         & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
+                        $dcCode = $LASTEXITCODE
                         & powercfg /setactive SCHEME_CURRENT 2>$null | Out-Null
-                        $item.ok = $true
-                        if ($wifi.Count -gt 0) { $item.detail = "maximum performance ($($wifi.Count) Wi-Fi adapter(s))" }
+                        $activeCode = $LASTEXITCODE
+                        # powercfg reports its own failures through the exit code, so read it rather
+                        # than assuming all three writes landed.
+                        $item.ok = ($acCode -eq 0 -and $dcCode -eq 0 -and $activeCode -eq 0)
+                        if (-not $item.ok) { $item.detail = "failed: powercfg exit $acCode/$dcCode/$activeCode" }
+                        elseif ($wifi.Count -gt 0) { $item.detail = "maximum performance ($($wifi.Count) Wi-Fi adapter(s))" }
                         else { $item.detail = 'maximum performance (no Wi-Fi adapter present)' }
                     }
                     default { $item.detail = "no tier apply is implemented for $key, skipped" }
@@ -1864,10 +1894,12 @@ function Invoke-TuneTier {
     }
     foreach ($key in @($Delta.Restore)) {
         Write-Tick 60 "Restoring $key to its original value"
-        $note = Restore-TuneKey $key $State
-        $ok = -not ("$note" -match 'failed')
-        $out += [ordered]@{ id = "net-restore-$key"; title = "Restore $key"; ok = $ok; detail = $note }
-        $Log.Add("restore $key : $note")
+        # Restore-TuneKey explains why it could not act instead of throwing, so its own Ok flag is
+        # the only honest source for this item. Guessing from the note text rendered every skip as a
+        # success.
+        $result = Restore-TuneKey $key $State
+        $out += [ordered]@{ id = "net-restore-$key"; title = "Restore $key"; ok = [bool]$result.Ok; detail = $result.Note }
+        $Log.Add("restore $key : $($result.Note)")
     }
     return @($out)
 }
@@ -2385,11 +2417,19 @@ if ($Action -eq 'tune-system') {
                     $log.Add("Migrated the old Batter Babel autoexec.cfg (backup: $cfgPath.batterbabel.bak)")
                 }
                 $updated = Merge-ManagedBlock $base $cfgWrite.Lines
-                [System.IO.File]::WriteAllText($cfgPath, $updated, [System.Text.UTF8Encoding]::new($false))
-                $cfgItem.ok = $true
-                $cfgItem.detail = "written: $cfgPath"
-                $writtenFiles += $cfgPath
-                $log.Add("Game config written: $cfgPath")
+                # A file with an unbalanced or reversed marker pair comes back unchanged from the
+                # merge above. Writing it out again and reporting success would claim the config is
+                # managed when it is not, and would keep claiming that on every later run.
+                if (-not (Test-WellFormedManagedBlock $updated)) {
+                    $cfgItem.detail = "not written: $($cfgWrite.RelativePath) has an incomplete Batter Babel marker"
+                    $log.Add("Game config skipped (incomplete marker): $cfgPath")
+                } else {
+                    [System.IO.File]::WriteAllText($cfgPath, $updated, [System.Text.UTF8Encoding]::new($false))
+                    $cfgItem.ok = $true
+                    $cfgItem.detail = "written: $cfgPath"
+                    $writtenFiles += $cfgPath
+                    $log.Add("Game config written: $cfgPath")
+                }
             }
         } catch {
             $cfgItem.detail = "failed: $($_.Exception.Message)"
@@ -2399,19 +2439,34 @@ if ($Action -eq 'tune-system') {
     }
 
     # --- 5) Record what is active now, so restore-tune and the next run can see it ---
-    $record = Load-TuneState
-    if ($record) {
-        $knownFiles = @()
-        $filesProp = $record.PSObject.Properties['managedConfigFiles']
-        if ($filesProp) { $knownFiles = @($filesProp.Value) }
-        # Union rather than replace: tuning a game that has no config surface must not forget files
-        # that are still carrying a Batter Babel block from an earlier game.
-        $allFiles = @(@($knownFiles) + @($writtenFiles) | Where-Object { $_ } | Select-Object -Unique)
-        $record | Add-Member -NotePropertyName appliedTier -NotePropertyValue $plan.Tier -Force
-        $record | Add-Member -NotePropertyName managedConfigFiles -NotePropertyValue ([string[]]$allFiles) -Force
-        Save-TuneState $record | Out-Null
-    } else {
-        $log.Add('No snapshot available, so the active tier was not recorded.')
+    try {
+        $record = Load-TuneState
+        if ($record) {
+            $knownFiles = @()
+            $filesProp = $record.PSObject.Properties['managedConfigFiles']
+            if ($filesProp) { $knownFiles = @($filesProp.Value) }
+            # Union rather than replace: tuning a game that has no config surface must not forget files
+            # that are still carrying a Batter Babel block from an earlier game.
+            $allFiles = @(@($knownFiles) + @($writtenFiles) | Where-Object { $_ } | Select-Object -Unique)
+            # Record the tier only when every parameter in this run actually landed. The keys both
+            # tiers share are only ever in the delta on a fresh apply, so recording a tier whose apply
+            # partly failed would hide those keys from every later run instead of retrying them.
+            # An empty value reads as "no tier yet", which makes the next run compute a full delta.
+            $failedSets = @($items | Where-Object { "$($_.id)" -like 'net-set-*' -and -not $_.ok })
+            $tierValue = $plan.Tier
+            if ($failedSets.Count -gt 0) {
+                $tierValue = ''
+                $log.Add("$($failedSets.Count) network parameter(s) did not apply, so no tier was recorded; the next run will apply them again.")
+            }
+            $record | Add-Member -NotePropertyName appliedTier -NotePropertyValue $tierValue -Force
+            $record | Add-Member -NotePropertyName managedConfigFiles -NotePropertyValue ([string[]]$allFiles) -Force
+            Save-TuneState $record | Out-Null
+        } else {
+            $log.Add('No snapshot available, so the active tier was not recorded.')
+        }
+    } catch {
+        # The tuning has already happened by now, so a bookkeeping failure must not lose the result.
+        $log.Add("Could not record the active tier: $($_.Exception.Message)")
     }
 
     $log.Add('=== system tune done ===')

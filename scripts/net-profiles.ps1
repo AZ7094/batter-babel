@@ -218,6 +218,21 @@ function Test-HasManagedBlock {
     return ($Text.Contains($NetBlockStart) -and $Text.Contains($NetBlockEnd))
 }
 
+# Stricter than Test-HasManagedBlock. A file can contain both markers but in an order or a count
+# this app never writes: a hand-edited file, or one an older build damaged. Test-HasManagedBlock
+# says true for those, so it cannot be used to decide whether a write succeeded. Only exactly one
+# start marker with exactly one end marker after it is a block we can honestly call managed.
+function Test-WellFormedManagedBlock {
+    param([string]$Text)
+    if (-not $Text) { return $false }
+    $start = $Text.IndexOf($NetBlockStart)
+    if ($start -lt 0) { return $false }
+    $end = $Text.IndexOf($NetBlockEnd, $start)
+    if ($end -lt 0) { return $false }
+    if ($Text.IndexOf($NetBlockStart, $start + 1) -ge 0) { return $false }
+    return ($Text.IndexOf($NetBlockEnd, $end + 1) -lt 0)
+}
+
 function Merge-ManagedBlock {
     param([string]$Text, [string[]]$Lines)
     $original = $Text
