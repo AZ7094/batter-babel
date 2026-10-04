@@ -20,3 +20,27 @@ Assert-Equal $true (Get-NetRecipe 'cs2').HasSurface 'cs2 reports a config surfac
 Assert-Equal 'latency' (Get-NetRecipe 'steam-4001890').Tier 'unknown game falls back to latency'
 Assert-Equal 0 (Get-NetRecipe 'steam-4001890').ConfigFiles.Count 'unknown game has no config file'
 Assert-Equal $false (Get-NetRecipe 'steam-4001890').HasSurface 'unknown game reports no surface'
+
+$same = Get-NetTierDelta 'latency' 'latency'
+Assert-Equal 0 $same.Set.Count 'same tier sets nothing'
+Assert-Equal 0 $same.Restore.Count 'same tier restores nothing'
+
+$down = Get-NetTierDelta 'latency' 'throughput'
+Assert-True ($down.Restore -contains 'Nagle') 'latency to throughput restores Nagle'
+Assert-True (-not ($down.Set -contains 'Nagle')) 'latency to throughput does not set Nagle'
+Assert-True ($down.Set -contains 'InterruptModeration') 'latency to throughput sets interrupt moderation'
+Assert-True (-not ($down.Set -contains 'Eee')) 'unchanged keys stay out of the delta'
+
+$up = Get-NetTierDelta 'throughput' 'latency'
+Assert-True ($up.Set -contains 'Nagle') 'throughput to latency sets Nagle'
+Assert-True (-not ($up.Restore -contains 'Nagle')) 'throughput to latency does not restore Nagle'
+
+$fresh = Get-NetTierDelta $null 'latency'
+Assert-True ($fresh.Set -contains 'Nagle') 'fresh apply sets Nagle'
+Assert-True ($fresh.Set -contains 'Throttling') 'fresh apply sets every concrete key'
+Assert-Equal 0 $fresh.Restore.Count 'fresh latency apply restores nothing'
+
+$freshTp = Get-NetTierDelta $null 'throughput'
+Assert-True ($freshTp.Restore -contains 'Nagle') 'fresh throughput apply restores Nagle'
+
+Assert-Equal 'TcpAckFrequency,TCPNoDelay,TcpDelAckTicks' ((Get-NagleValueNames) -join ',') 'Nagle triad names'

@@ -149,3 +149,48 @@ function Get-NetRecipe {
         HasSurface = $false
     }
 }
+
+function Get-NagleValueNames {
+    # The registry value names the logical 'Nagle' key stands for. Kept here so
+    # the executor and the tests cannot drift apart on the triad.
+    return @('TcpAckFrequency', 'TCPNoDelay', 'TcpDelAckTicks')
+}
+
+function Get-NetTierDelta {
+    param([string]$FromTierId, [string]$ToTierId)
+    $set = @()
+    $restore = @()
+    $target = Get-NetTier $ToTierId
+
+    # Re-applying the tier that is already active is a deliberate no-op, so a
+    # repeated run never rewrites the registry.
+    if ($FromTierId -and $FromTierId -eq $ToTierId) {
+        return @{ Set = $set; Restore = $restore }
+    }
+
+    $source = $null
+    if ($FromTierId -and $NetProfileTiers.ContainsKey($FromTierId)) {
+        $source = $NetProfileTiers[$FromTierId]
+    }
+
+    foreach ($key in $target.Keys) {
+        if ($key -eq 'Id' -or $key -eq 'Label') { continue }
+        $value = $target[$key]
+
+        # The [string] test is load-bearing: PowerShell coerces the right-hand
+        # operand to the left operand's type, so `$true -eq 'Restore'` is TRUE
+        # (a non-empty string is a truthy boolean). Without the type check the
+        # latency tier's Nagle would be classified as a restore, the exact
+        # opposite of what the spec requires.
+        if ($value -is [string] -and $value -eq 'Restore') {
+            $restore += $key
+            continue
+        }
+        if ($null -ne $source -and $source.Contains($key) -and $source[$key] -eq $value) {
+            continue
+        }
+        $set += $key
+    }
+
+    return @{ Set = $set; Restore = $restore }
+}
