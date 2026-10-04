@@ -33,7 +33,7 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": ["../scripts/optimization.ps1", "../scripts/ip-core.ps1", "../scripts/cf-probe.ps1"],
+    "resources": ["../scripts/optimization.ps1", "../scripts/ip-core.ps1", "../scripts/cf-probe.ps1", "../scripts/net-profiles.ps1"],
     "windows": {
       "nsis": {
         "installMode": "currentUser"
