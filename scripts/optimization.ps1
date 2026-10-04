@@ -2573,46 +2573,54 @@ if ($Action -eq 'restore-tune') {
     }
     $items += $wifiItem
 
-    # 7) CS2 autoexec.cfg (only when CS2 is installed)
-    $cs2Loc = Find-Game $Catalog['cs2']
-    if ($cs2Loc.Installed -and $cs2Loc.ExecutablePath) {
-        Write-Tick 86 'Restoring CS2 autoexec.cfg'
-        $cs2Item = [ordered]@{ id = 'cs2-cfg'; title = 'CS2 autoexec.cfg restored'; ok = $false; detail = '' }
-        try {
-            $root = Split-Path (Split-Path (Split-Path (Split-Path $cs2Loc.ExecutablePath -Parent) -Parent) -Parent) -Parent
-            $cfgPath = Join-Path $root 'game\csgo\cfg\autoexec.cfg'
-            $bakPath = "$cfgPath.batterbabel.bak"
-            if (Test-Path -LiteralPath $bakPath) {
-                Copy-Item -LiteralPath $bakPath -Destination $cfgPath -Force
-                Remove-Item -LiteralPath $bakPath -Force -ErrorAction SilentlyContinue
-                $cs2Item.ok = $true
-                $cs2Item.detail = 'restored from backup'
-                $log.Add('CS2 autoexec.cfg restored from backup.')
-            } elseif (Test-Path -LiteralPath $cfgPath) {
-                $content = [System.IO.File]::ReadAllText($cfgPath)
-                if ($content -match 'Batter Babel') {
-                    Remove-Item -LiteralPath $cfgPath -Force
-                    $cs2Item.ok = $true
-                    $cs2Item.detail = 'generated file removed'
-                    $log.Add('CS2 autoexec.cfg (generated) removed.')
-                } else {
-                    $cs2Item.ok = $true
-                    $cs2Item.detail = 'no Batter Babel backup, file left untouched'
-                    $log.Add('CS2 autoexec.cfg: nothing to restore.')
-                }
-            } else {
-                $cs2Item.ok = $true
-                $cs2Item.detail = 'nothing to restore'
-                $log.Add('CS2 autoexec.cfg: nothing to restore.')
+    # 7) Game config files: remove the Batter Babel block, leave everything else alone
+    Write-Tick 86 'Removing Batter Babel blocks'
+    $cfgItem = [ordered]@{ id = 'game-configs'; title = 'Game config files'; ok = $true; detail = ''; files = @() }
+    $managed = @()
+    $managedProp = $state.PSObject.Properties['managedConfigFiles']
+    if ($managedProp) { $managed = @($managedProp.Value | Where-Object { $_ }) }
+    if ($managed.Count -eq 0) {
+        $cfgItem.detail = 'no game config file was recorded'
+        $log.Add('No managed game config file recorded.')
+    } else {
+        $handled = @()
+        foreach ($cfgPath in $managed) {
+            Write-Tick 88 "Restoring game config $cfgPath"
+            if (-not (Test-Path -LiteralPath $cfgPath)) {
+                # A file the user deleted themselves is not a failure.
+                $handled += "$cfgPath (already gone)"
+                $log.Add("Game config already gone: $cfgPath")
+                continue
             }
-        } catch {
-            $cs2Item.detail = "failed: $($_.Exception.Message)"
-            $log.Add("CS2 restore failed: $($_.Exception.Message)")
+            try {
+                $existing = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+                $stripped = Remove-ManagedBlock $existing
+                if ("$stripped" -ne "$existing") {
+                    [System.IO.File]::WriteAllText($cfgPath, $stripped, [System.Text.UTF8Encoding]::new($false))
+                    $handled += $cfgPath
+                    $log.Add("Managed block removed: $cfgPath")
+                } else {
+                    $handled += "$cfgPath (no Batter Babel block found)"
+                    $log.Add("No Batter Babel block found in $cfgPath.")
+                }
+            } catch {
+                $cfgItem.ok = $false
+                $log.Add("Game config restore failed: $($_.Exception.Message)")
+            }
         }
-        $items += $cs2Item
+        $cfgItem.files = $handled
+        $cfgItem.detail = "$($handled.Count) file(s) handled"
     }
+    $items += $cfgItem
 
-    # The snapshot is consumed on restore so the next tune captures fresh originals.
+    # The snapshot is consumed on restore so the next tune captures fresh originals. The tier fields
+    # are cleared first, because the delete below ignores its own errors and a stale appliedTier
+    # would otherwise survive in a file that is still on disk.
+    try {
+        $state | Add-Member -NotePropertyName appliedTier -NotePropertyValue $null -Force
+        $state | Add-Member -NotePropertyName managedConfigFiles -NotePropertyValue ([string[]]@()) -Force
+        Save-TuneState $state | Out-Null
+    } catch {}
     try { Remove-Item -LiteralPath (Get-TuneStatePath) -Force -ErrorAction SilentlyContinue } catch {}
     $log.Add('Snapshot cleared.')
     $log.Add('=== system restore done ===')
