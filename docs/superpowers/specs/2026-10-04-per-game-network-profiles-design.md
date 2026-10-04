@@ -24,16 +24,16 @@
 | `cl_interp_ratio 2` | [cl_interp_ratio](https://totalcsgo.com/commands/clinterpratio)：徽章 **CS:GO Command**（非 CS2）；默认值 2。该页把 2 列为「Poor / Laggy Internet Connections」的推荐值 | 删除（CS2 中不生效） |
 | `cl_net_buffer_ticks 64` | Total CS 命令库**无此条目**（`/commands/clnetbuffersticks` 返回 404，而同规则的 `clinterpratio` 正常返回） | 删除（未文档化的引擎 cvar，不写） |
 | `net_graph 1` | CSDB.gg 标注 **Removed in CS2**：「the CS:GO overlay no longer exists. Its replacement is the Telemetry section under Settings → Game」 | 删除 |
-| `cl_allow_animated_avatars false` | [cl_allow_animated_avatars](https://totalcsgo.com/commands/clallowanimatedavatars)：徽章 **CS2 Command**，默认值 **1** | **在 CS2 中有效**。但它属于画面/性能开关而非网络参数；本设计的原则是「网络配方只写网络参数」，故从网络配方中移除。**开放问题**：若要保留这条非网络优化，需要单独的决定（见「开放问题」） |
+| `cl_allow_animated_avatars false` | [cl_allow_animated_avatars](https://totalcsgo.com/commands/clallowanimatedavatars)：徽章 **CS2 Command**，默认值 **1** | **保留**（用户已确认）。它在 CS2 中确实有效，只是属于画面/性能开关而非网络参数；本设计把它保留在受管块内，并在结果里如实标注它属于**非网络优化**，不冒充网络参数 |
 
-配套评估：CS2 中 `rate` 默认已是 Unrestricted（786432），`cl_timeout` 与延迟无关；对国内（Perfect World）服务器玩家而言，`mm_dedicated_search_maxping` 这类匹配限速参数意义有限。因此**CS2 的配置文件配方内容为空**，动作改为「清理此前写入的无效参数块」。给 CS2 的真实收益来自 latency 档位，不来自 cfg。
+配套评估：CS2 中 `rate` 默认已是 Unrestricted（786432），`cl_timeout` 与延迟无关；对国内（Perfect World）服务器玩家而言，`mm_dedicated_search_maxping` 这类匹配限速参数意义有限。因此 **CS2 的配方里没有任何「网络」参数可写**：受管块只保留一条已核实有效的**非网络**优化（`cl_allow_animated_avatars 0`），其余 5 行全部清除。给 CS2 的网络收益来自 latency 档位，不来自 cfg。
 
 ## 目标
 
 - 「系统调优」改为**按当前选中游戏**执行：套用该游戏的系统参数档位，并在该游戏确有客户端配置面时写入配置文件。
 - 结果里逐项如实标注「真生效 / 无客户端网络参数 / 已清理旧无效参数」，不得把被游戏忽略的参数报成成功。
 - 把每游戏配方做成**数据**，新增游戏只需加一条数据、不改执行逻辑。
-- 清理 CS2 现存 `autoexec.cfg` 里那 6 行：3 条在 CS2 中无效、1 条未文档化、1 条把带宽上限压低到默认 25% 的 `rate`、1 条虽在 CS2 中有效但属非网络参数（见「开放问题」）。
+- 清理 CS2 现存 `autoexec.cfg` 里那 6 行中的 5 行：3 条在 CS2 中无效、1 条未文档化、1 条把带宽上限压低到默认 25% 的 `rate`；保留 1 条已核实有效但不属于网络参数的非网络优化（`cl_allow_animated_avatars 0`）。
 
 ## 非目标
 
@@ -48,6 +48,7 @@
 
 - 结构采用**独立模块** `scripts/net-profiles.ps1`（与 `ip-core.ps1` / `cf-probe.ps1` 同模式，可单测），而不是把配方内嵌进 `optimization.ps1`，也不使用 JSON 数据文件。
 - CS2 的 `rate 196608` **不保留**（不改为写默认值 786432，直接不写 `rate`，尊重游戏内设置）。
+- `cl_allow_animated_avatars 0` **保留**（已核实为 CS2 有效命令，默认 1）。它属非网络优化，因此结果里必须标注为「非网络优化」，且不得计入网络参数项。
 - 两档的 `autotuninglevel` **都用 `normal`**（不采用激进的 `restricted`）。
 - 不写 `mm_dedicated_search_maxping`。
 - 触发方式：**手动**——选中游戏后点「系统调优」。
@@ -105,10 +106,18 @@ Remove-ManagedBlock # <text> -> 新文本          纯函数，无标记时原�
 
 ### 4. CS2 配方重做
 
-- `ConfigFiles`：一条，指向 `<CS2根>\game\csgo\cfg\autoexec.cfg`，受管块内容为**注释 + 空**，即清掉旧块内容并留下说明「Batter Babel 不再写入 CS2 网络 cvar，原因见设计文档」。
+- `ConfigFiles`：一条，指向 `<CS2根>\game\csgo\cfg\autoexec.cfg`，受管块内容为**注释说明 + 一条保留的非网络优化**，即清掉旧块里那 5 行无效/有害内容，只留下：
+
+  ```
+  // Batter Babel (generated) - CS2 has no client-side network cvar worth setting;
+  // see docs/superpowers/specs/2026-10-04-per-game-network-profiles-design.md
+  // The line below is a rendering tweak, not a network parameter.
+  cl_allow_animated_avatars 0
+  ```
+
 - 迁移：现存文件是旧版整体覆盖产物（内容即那 6 行），需能被新版安全接管——受管块函数在**找不到标记**时按「旧格式整体接管」处理：先备份，再以受管块重写。
 - `Tier`：`latency`。
-- 结果项需说明「已移除 3 条在 CS2 中无效的参数、1 条未文档化参数，以及 1 条把带宽上限压低到默认 25% 的 `rate`」。
+- 结果项需说明「已移除 3 条在 CS2 中无效的参数、1 条未文档化参数，以及 1 条把带宽上限压低到默认 25% 的 `rate`」，并单列一条说明保留的 `cl_allow_animated_avatars 0` 是**非网络优化**。
 
 ### 5. 每游戏档位映射
 
@@ -149,14 +158,10 @@ Remove-ManagedBlock # <text> -> 新文本          纯函数，无标记时原�
 
 1. 选中任一已安装游戏执行「系统调优」，结果展示该游戏所用档位，且系统参数与档位定义一致。
 2. 从 latency 切到 throughput 后，注册表中 Nagle 三件套回到快照原值（不再残留 `1/1/0`）。
-3. CS2 的 `autoexec.cfg` 在受管块内的旧 6 行被清除；块外用户内容保持不变。
+3. CS2 的 `autoexec.cfg` 在受管块内只剩 `cl_allow_animated_avatars 0`（旧 6 行中另外 5 行被清除）；块外用户内容保持不变。
 4. 未登记游戏得到明确「无客户端网络参数」的结果，而不是空成功。
 5. 新单测全部通过；CI 六项检查（纯 ASCII / 解析 / `node --check app.js` / 资源白名单 / PS 测试 / cargo）全绿。
 6. `restore-tune` 能把系统参数与受管块都还原干净。
-
-## 开放问题
-
-- `cl_allow_animated_avatars 0` 已核实为 **CS2 有效命令**（默认 1），只是不属于网络参数。本设计按「网络配方只写网络参数」将其移除；若希望保留这条非网络优化，需要在实现前明确决定，并给它一个不叫「网络参数」的归属（例如单独的画面/性能项）。
 
 ## 风险
 
