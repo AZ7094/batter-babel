@@ -6,6 +6,7 @@ $scriptsRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $scriptsRoot 'ip-core.ps1')
 . (Join-Path $scriptsRoot 'cf-probe.ps1')
 . (Join-Path $scriptsRoot 'net-profiles.ps1')
+. (Join-Path $scriptsRoot 'game-paths.ps1')
 . (Join-Path $PSScriptRoot 'TestAssert.ps1')
 Reset-TestTally
 

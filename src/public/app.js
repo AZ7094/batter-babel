@@ -418,21 +418,21 @@ function onGameChange() {
 }
 
 // One button that flips between 加速游戏 and 取消游戏加速 based on the live QoS rule state.
-// Games without a profile (support = false) have no known executable, so they cannot be boosted
-// safely -- the button explains that instead of guessing which exe to tag.
+// The QoS rule matches a single executable path, so what the button needs is a known executable --
+// not a domain profile. The old guard used support (whether the game has CDN/API route groups),
+// which disabled 加速游戏 for games that are installed and have a perfectly good executable.
+// Games with no resolved binary stay disabled and the button says so instead of guessing.
 function renderBoostButton() {
   const on = !!(currentGame && currentGame.accelerated);
   boostBtn.textContent = on ? '取消游戏加速' : '加速游戏';
   boostBtn.classList.toggle('active', on);
-  boostBtn.disabled = !currentGame || !currentGame.installed || !currentGame.support || busy;
+  boostBtn.disabled = !currentGame || !currentGame.installed || !currentGame.executablePath || busy;
   if (!currentGame) {
     boostBtn.title = '请先选择一个游戏';
-  } else if (currentGame.standalone) {
-    boostBtn.title = '独立客户端（非 Steam），无法自动定位可执行文件，暂不支持 QoS 加速；优选仍可使用';
   } else if (!currentGame.installed) {
     boostBtn.title = '该游戏未安装';
-  } else if (!currentGame.support) {
-    boostBtn.title = '该游戏还没有配置可执行文件，暂时无法创建 QoS 规则；可先用「系统调优」';
+  } else if (!currentGame.executablePath) {
+    boostBtn.title = '没有定位到该游戏的可执行文件，暂时无法创建 QoS 规则；可先用「系统调优」或「开始优选」';
   } else {
     boostBtn.title = on
       ? '移除该游戏的 QoS 加速规则'

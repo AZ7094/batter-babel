@@ -263,8 +263,30 @@ function Get-SteamLibraries {
     return @($unique.Values)
 }
 
+# Find the executable inside an install directory, for a game whose binary name the catalog does not
+# know. Bounded depth on purpose: a game binary sits at or just under its install root, and walking
+# deeper would start reading the whole package. The choice itself lives in game-paths.ps1 so it can
+# be tested; this function only does the file system work.
+function Find-GameExecutableIn([string]$Directory, [string]$GameName) {
+    if (-not $Directory) { return $null }
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return $null }
+    $candidates = @()
+    try {
+        $candidates = @(Get-ChildItem -LiteralPath $Directory -Filter '*.exe' -Recurse -File -Depth 2 -ErrorAction SilentlyContinue |
+            ForEach-Object { @{ Name = $_.Name; Path = $_.FullName; Size = $_.Length } })
+    } catch {
+        return $null
+    }
+    return (Select-GameExecutable $candidates $GameName)
+}
+
 function Find-Game([hashtable]$Game) {
-    $running = Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($Game.Executable)) -ErrorAction SilentlyContinue | Select-Object -First 1
+    # A synthesised steam-<appid> entry carries no executable name, and Get-Process would otherwise be
+    # asked to look up a null name.
+    $running = $null
+    if ($Game.Executable) {
+        $running = Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($Game.Executable)) -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
     if ($running) {
         try {
             $path = $running.Path
@@ -280,18 +302,33 @@ function Find-Game([hashtable]$Game) {
             $match = [regex]::Match($content, '"installdir"\s*"(?<dir>[^"]+)"')
             if ($match.Success) {
                 $base = Join-Path (Join-Path $library 'steamapps\common') $match.Groups['dir'].Value
-                $exe = Join-Path $base $Game.RelativePath
-                if (Test-Path -LiteralPath $exe) {
-                    return @{ Installed = $true; Running = $false; ExecutablePath = $exe; Source = 'Steam library' }
-                }
-                # Fallback for games whose layout differs from the hardcoded relative path: look for
-                # the executable by name a few levels deep instead of reporting them as not installed.
-                try {
-                    $found = Get-ChildItem -LiteralPath $base -Filter $Game.Executable -Recurse -File -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($found) {
-                        return @{ Installed = $true; Running = $false; ExecutablePath = $found.FullName; Source = 'Steam library (searched)' }
+                # Only join when there is something to join. Join-Path answers with the directory
+                # itself for a null child, and that value would then be handed to the QoS rule as if
+                # it were an executable.
+                if ($Game.RelativePath) {
+                    $exe = Join-Path $base $Game.RelativePath
+                    if (Test-Path -LiteralPath $exe) {
+                        return @{ Installed = $true; Running = $false; ExecutablePath = $exe; Source = 'Steam library' }
                     }
-                } catch {}
+                }
+                if ($Game.Executable) {
+                    # Fallback for games whose layout differs from the hardcoded relative path: look
+                    # for the executable by name a few levels deep instead of reporting them as not
+                    # installed.
+                    try {
+                        $found = Get-ChildItem -LiteralPath $base -Filter $Game.Executable -Recurse -File -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if ($found) {
+                            return @{ Installed = $true; Running = $false; ExecutablePath = $found.FullName; Source = 'Steam library (searched)' }
+                        }
+                    } catch {}
+                } else {
+                    # No known binary name at all, so choose one from the install directory the same
+                    # way the scan does. Boosting a synthesised entry then agrees with the scan.
+                    $searched = Find-GameExecutableIn $base $Game.Name
+                    if ($searched) {
+                        return @{ Installed = $true; Running = $false; ExecutablePath = $searched; Source = 'Steam library (selected)' }
+                    }
+                }
             }
         }
     }
@@ -1010,7 +1047,10 @@ function Get-OnlineGameList {
             name = $displayName
             vendor = $vendorName
             installed = $true; running = $false
-            executablePath = $null; source = 'Steam library'
+            # Resolved here rather than left null. A QoS rule needs a real executable path, and the
+            # install directory is already known, so the game is boostable without a catalog entry.
+            executablePath = (Find-GameExecutableIn $app.installPath $displayName)
+            source = 'Steam library'
             installPath = $app.installPath
             support = ($platformGroups.Count -gt 0)
             online = $true; recognized = $true
@@ -1040,7 +1080,8 @@ function Get-OnlineGameList {
             name = $tp.name
             vendor = $tpVendor
             installed = $true; running = $false
-            executablePath = $null; source = $tp.source
+            executablePath = (Find-GameExecutableIn $tp.installPath $tp.name)
+            source = $tp.source
             installPath = $tp.installPath
             support = ($tpGroups.Count -gt 0)
             online = $true; recognized = $true
@@ -1227,6 +1268,7 @@ function Get-RouteProbe {
 . "$PSScriptRoot\ip-core.ps1"
 . "$PSScriptRoot\cf-probe.ps1"
 . "$PSScriptRoot\net-profiles.ps1"
+. "$PSScriptRoot\game-paths.ps1"
 
 # NOTE: the Limbus API probe rules and the DoH source list used to live here as
 # $CfDomainCatalog / $CloudFrontEndpoints / $CloudFrontDohSources. All three were defined but never
