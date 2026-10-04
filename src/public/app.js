@@ -144,13 +144,12 @@ const PROGRESS_ZH = [
   [/^Probing (.+) \((\d+)\/(\d+)\)$/, '探测 $1（$2/$3 轮）'],
   [/^Done$/, '完成'],
   [/^Snapshotting current settings$/, '读取当前设置'],
-  [/^TCP low latency \(Nagle\)$/, 'TCP 低延迟（Nagle/延迟ACK）'],
-  [/^TCP global tuning$/, 'TCP 全局参数'],
-  [/^Adapter low-latency properties$/, '网卡低延迟属性'],
-  [/^Windows network throttling$/, '系统网络限流'],
-  [/^Wi-Fi adapter power mode$/, 'Wi-Fi 电源模式'],
   [/^Background bandwidth check$/, '后台占带宽检查'],
-  [/^CS2 autoexec\.cfg$/, 'CS2 配置文件'],
+  [/^Applying network tier (\S+)$/, '套用网络参数档位 $1'],
+  [/^Restoring (.+) to its original value$/, '还原 $1 为原始值'],
+  [/^Writing game config (.+)$/, '写入游戏配置 $1'],
+  [/^Removing Batter Babel blocks$/, '移除 Batter Babel 配置块'],
+  [/^Restoring game config (.+)$/, '还原游戏配置 $1'],
   [/^System tune complete$/, '系统调优完成'],
   [/^Loading snapshot$/, '读取快照'],
   [/^Restoring TCP low latency$/, '还原 TCP 低延迟'],
@@ -159,7 +158,6 @@ const PROGRESS_ZH = [
   [/^Restoring adapter power management$/, '还原网卡电源管理'],
   [/^Restoring network throttling$/, '还原系统网络限流'],
   [/^Restoring Wi-Fi power mode$/, '还原 Wi-Fi 电源模式'],
-  [/^Restoring CS2 autoexec\.cfg$/, '还原 CS2 配置文件'],
   [/^System restore complete$/, '系统还原完成'],
   [/^Validating mappings$/, '校验映射'],
   [/^Hosts updated$/, 'hosts 已更新'],
@@ -654,7 +652,10 @@ async function tuneSystem() {
   clearLog();
   appendLog('=== 系统调优 ===');
   try {
-    const data = await invokeAction({ action: 'tune-system' });
+    // The tune button is deliberately available with no game selected -- the UI offers 系统调优 as
+    // the fallback when a game has no QoS profile -- so an empty id keeps the generic tuning path
+    // working instead of throwing on currentGame.id.
+    const data = await invokeAction({ action: 'tune-system', gameId: currentGame ? currentGame.id : '' });
     for (const item of (data.items || [])) {
       appendLog(`${item.ok ? '[OK]' : '[!]'} ${item.title}: ${item.detail}`);
     }
