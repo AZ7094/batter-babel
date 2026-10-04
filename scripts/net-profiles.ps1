@@ -371,3 +371,59 @@ function Get-NetTunePlan {
         Notes = @($notes)
     }
 }
+
+# --- the user's config file is not ours to re-encode ------------------------------------------------
+# A game's config file is the user's file and is not necessarily UTF-8: an editor on a Chinese Windows
+# writes the system code page, and some tools write UTF-16. Decoding such a file as UTF-8 replaces
+# every non-ASCII byte with U+FFFD, and writing it back as UTF-8 makes that permanent for every
+# character outside the managed block. The bytes are inspected once and the same encoding is used to
+# write the file back, so only the block changes.
+#
+# Returns Name / Encoding / BomLength. Bytes with no BOM that are not valid UTF-8 are treated as the
+# system code page, which is what Notepad and most game tools produce by default.
+function Get-ConfigEncodingFromBytes {
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes) { $Bytes = @() }
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        return @{ Name = 'utf-8-bom'; Encoding = (New-Object System.Text.UTF8Encoding($false)); BomLength = 3 }
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
+        return @{ Name = 'utf-16le'; Encoding = (New-Object System.Text.UnicodeEncoding($false, $false)); BomLength = 2 }
+    }
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
+        return @{ Name = 'utf-16be'; Encoding = (New-Object System.Text.UnicodeEncoding($true, $false)); BomLength = 2 }
+    }
+    # Strict on purpose: a decoder that substitutes U+FFFD would accept GBK bytes and lose them
+    # silently, and the loss would only become visible after the file had been written back.
+    $strict = New-Object System.Text.UTF8Encoding($false, $true)
+    try {
+        [void]$strict.GetString($Bytes)
+        return @{ Name = 'utf-8'; Encoding = $strict; BomLength = 0 }
+    } catch {
+        return @{ Name = 'ansi'; Encoding = [System.Text.Encoding]::Default; BomLength = 0 }
+    }
+}
+
+# Read a config file together with what is needed to write it back in the same encoding.
+function Read-ManagedConfigFile {
+    param([string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $info = Get-ConfigEncodingFromBytes $bytes
+    $offset = [int]$info.BomLength
+    $text = ''
+    if ($bytes.Length -gt $offset) { $text = $info.Encoding.GetString($bytes, $offset, $bytes.Length - $offset) }
+    return @{ Text = $text; Name = $info.Name; Encoding = $info.Encoding; BomLength = $offset }
+}
+
+# Write the text back exactly as it was read, including any byte order mark.
+function Write-ManagedConfigFile {
+    param([string]$Path, $Info, [string]$Text)
+    $body = $Info.Encoding.GetBytes($Text)
+    $bytes = $body
+    if ([int]$Info.BomLength -eq 3) {
+        $bytes = [byte[]](@(0xEF, 0xBB, 0xBF) + $body)
+    } elseif ([int]$Info.BomLength -eq 2) {
+        if ("$($Info.Name)" -eq 'utf-16be') { $bytes = [byte[]](@(0xFE, 0xFF) + $body) } else { $bytes = [byte[]](@(0xFF, 0xFE) + $body) }
+    }
+    [System.IO.File]::WriteAllBytes($Path, $bytes)
+}

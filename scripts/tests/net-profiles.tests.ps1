@@ -114,3 +114,54 @@ Assert-True (($limbusPlan.Notes -join ' ') -match 'no client-side network parame
 $switchPlan = Get-NetTunePlan 'limbus' 'latency' ''
 Assert-True ($switchPlan.Restore -contains 'Nagle') 'switching to throughput plans a Nagle restore'
 Assert-True (-not ($switchPlan.Set -contains 'Nagle')) 'switching to throughput does not plan a Nagle set'
+
+# --- the user's own config encoding is preserved (N6) ---
+# A game's autoexec.cfg belongs to the user and may be UTF-8, UTF-16, or the system code page.
+# Rewriting it as UTF-8 would silently replace every non-ASCII character outside the managed block,
+# which is why these tests compare bytes rather than text: the text in memory looks right either way.
+$cnText = [string]([char]0x4E2D) + [char]0x6587
+$utf8Plain = (New-Object System.Text.UTF8Encoding($false)).GetBytes($cnText)
+
+Assert-Equal 'utf-8' (Get-ConfigEncodingFromBytes $utf8Plain).Name 'plain UTF-8 is detected'
+Assert-Equal 'utf-8-bom' (Get-ConfigEncodingFromBytes ([byte[]](@(0xEF, 0xBB, 0xBF) + $utf8Plain))).Name 'a UTF-8 BOM is detected'
+Assert-Equal 'utf-16le' (Get-ConfigEncodingFromBytes ([byte[]](@(0xFF, 0xFE) + $utf8Plain))).Name 'a UTF-16LE BOM is detected'
+Assert-Equal 'utf-16be' (Get-ConfigEncodingFromBytes ([byte[]](@(0xFE, 0xFF) + $utf8Plain))).Name 'a UTF-16BE BOM is detected'
+Assert-Equal 'utf-8' (Get-ConfigEncodingFromBytes ([byte[]](0x61, 0x62, 0x63))).Name 'plain ASCII reads as UTF-8'
+
+# 0x23 0x20 then 0xD6 0xD0 0xCE 0xC4, which are the GBK bytes for the two characters above and are
+# not valid UTF-8. They are written literally because what matters is the byte sequence, not which
+# code page the machine happens to answer with.
+$ansiBytes = [byte[]](0x23, 0x20, 0xD6, 0xD0, 0xCE, 0xC4, 0x0D, 0x0A)
+Assert-Equal 'ansi' (Get-ConfigEncodingFromBytes $ansiBytes).Name 'bytes that are not valid UTF-8 fall back to the system code page'
+
+$encDir = Join-Path $env:TEMP ('bb-enc-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $encDir | Out-Null
+try {
+    $ansiPath = Join-Path $encDir 'ansi.cfg'
+    [System.IO.File]::WriteAllBytes($ansiPath, $ansiBytes)
+    $reader = Read-ManagedConfigFile $ansiPath
+    Assert-Equal 'ansi' $reader.Name 'a non-UTF-8 config is recognised on read'
+    Assert-Equal ([System.Text.Encoding]::Default.GetString($ansiBytes)) $reader.Text 'a non-UTF-8 config decodes with the system code page'
+
+    $merged = Merge-ManagedBlock $reader.Text @('// managed line')
+    Write-ManagedConfigFile $ansiPath $reader $merged
+    $expected = [System.Text.Encoding]::Default.GetBytes($merged)
+    $actual = [System.IO.File]::ReadAllBytes($ansiPath)
+    Assert-Equal $expected.Length $actual.Length 'the rewritten non-UTF-8 config keeps its byte length'
+    $identical = $true
+    for ($i = 0; $i -lt $actual.Length; $i++) { if ($actual[$i] -ne $expected[$i]) { $identical = $false; break } }
+    Assert-True $identical 'the rewritten non-UTF-8 config is byte-identical to the system code page encoding'
+    Assert-True (Test-HasManagedBlock (Read-ManagedConfigFile $ansiPath).Text) 'the managed block survives the round trip'
+
+    $bomPath = Join-Path $encDir 'bom.cfg'
+    [System.IO.File]::WriteAllBytes($bomPath, [byte[]](@(0xEF, 0xBB, 0xBF) + (New-Object System.Text.UTF8Encoding($false)).GetBytes("$cnText`r`n")))
+    $bomReader = Read-ManagedConfigFile $bomPath
+    Assert-Equal 'utf-8-bom' $bomReader.Name 'a UTF-8 BOM is detected on read'
+    Assert-Equal "$cnText`r`n" $bomReader.Text 'the BOM is not part of the text'
+    Write-ManagedConfigFile $bomPath $bomReader "$($bomReader.Text)x`r`n"
+    $bomAfter = [System.IO.File]::ReadAllBytes($bomPath)
+    Assert-True ($bomAfter[0] -eq 0xEF -and $bomAfter[1] -eq 0xBB -and $bomAfter[2] -eq 0xBF) 'the UTF-8 BOM is written back'
+    Assert-Equal "$cnText`r`nx`r`n" (Read-ManagedConfigFile $bomPath).Text 'the BOM file round trips through UTF-8'
+} finally {
+    Remove-Item -LiteralPath $encDir -Recurse -Force -ErrorAction SilentlyContinue
+}

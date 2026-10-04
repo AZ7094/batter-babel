@@ -2446,8 +2446,13 @@ if ($Action -eq 'tune-system') {
                 $log.Add("Game config skipped: $cfgDir is missing.")
             } else {
                 $existing = ''
+                # Read with the file's own encoding. The block is spliced into this text and the whole
+                # file is written back, so decoding the user's config as UTF-8 would replace every
+                # non-ASCII character in it the moment a block was added.
+                $reader = $null
                 if (Test-Path -LiteralPath $cfgPath) {
-                    $existing = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+                    $reader = Read-ManagedConfigFile $cfgPath
+                    $existing = $reader.Text
                 }
                 $base = $existing
                 # Only a file that is exactly what this app used to write is replaced. A config the
@@ -2466,7 +2471,15 @@ if ($Action -eq 'tune-system') {
                     $cfgItem.detail = "not written: $($cfgWrite.RelativePath) has an incomplete Batter Babel marker"
                     $log.Add("Game config skipped (incomplete marker): $cfgPath")
                 } else {
-                    [System.IO.File]::WriteAllText($cfgPath, $updated, [System.Text.UTF8Encoding]::new($false))
+                    if ($reader) {
+                        # Written back in the encoding the file already had, so nothing outside the
+                        # managed block changes.
+                        Write-ManagedConfigFile $cfgPath $reader $updated
+                    } else {
+                        # The file did not exist, so there is no original encoding to preserve. UTF-8
+                        # without a BOM is what the rest of the app writes.
+                        [System.IO.File]::WriteAllText($cfgPath, $updated, [System.Text.UTF8Encoding]::new($false))
+                    }
                     $cfgItem.ok = $true
                     $cfgItem.detail = "written: $cfgPath"
                     $writtenFiles += $cfgPath
@@ -2690,10 +2703,11 @@ if ($Action -eq 'restore-tune') {
                 continue
             }
             try {
-                $existing = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+                $reader = Read-ManagedConfigFile $cfgPath
+                $existing = $reader.Text
                 $stripped = Remove-ManagedBlock $existing
                 if ("$stripped" -ne "$existing") {
-                    [System.IO.File]::WriteAllText($cfgPath, $stripped, [System.Text.UTF8Encoding]::new($false))
+                    Write-ManagedConfigFile $cfgPath $reader $stripped
                     $handled += $cfgPath
                     $log.Add("Managed block removed: $cfgPath")
                 } else {
