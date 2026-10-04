@@ -77,8 +77,6 @@ cargo install tauri-cli --version "^2"
 cargo tauri build
 ```
 
-图标由 `build/make_tauri_icons.py`（Python + Pillow）生成，需要时可用它重新生成。
-
 ## 工作原理
 
 - 一个很小的 [Tauri](https://tauri.app) 外壳（`src-tauri/`，Rust）在系统 WebView2 里承载静态界面（`src/public/`），向前端暴露两个命令。
@@ -110,3 +108,6 @@ cargo tauri build
 ## 许可证
 
 [MIT](LICENSE)
+
+##问题反馈
+deacon_2025@foxmail.com
