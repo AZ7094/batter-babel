@@ -296,8 +296,50 @@ function Get-NetGameRoot {
     $path = $ExecutablePath
     for ($i = 0; $i -lt $depth; $i++) {
         $parent = Split-Path -Parent $path
-        if (-not $parent) { break }
+        if (-not $parent) { return $path }
         $path = $parent
     }
     return $path
+}
+
+function Get-NetTunePlan {
+    param([string]$GameId, [string]$FromTierId, [string]$InstallRoot)
+    # Composes the decision and owns no I/O: the install root arrives as an
+    # argument so this stays testable without a filesystem or a registry.
+    $recipe = Get-NetRecipe $GameId
+    $delta = Get-NetTierDelta $FromTierId $recipe.Tier
+
+    $notes = @()
+    if ($null -ne $recipe.NonNetworkNotes) { $notes += @($recipe.NonNetworkNotes) }
+
+    # A plain array with +=, not a generic List: assigning a List[object] into an
+    # [ordered]@{...} literal throws "Argument types do not match" at
+    # construction time. Array addition does store the hashtable as a single
+    # element, which is what is wanted here.
+    $writes = @()
+    $files = @($recipe.ConfigFiles)
+    if ($files.Count -gt 0) {
+        if (-not $InstallRoot) {
+            $notes += "The game install path is not known, so no config file was written."
+        } else {
+            foreach ($file in $files) {
+                $writes += [ordered]@{
+                    Path = [IO.Path]::Combine($InstallRoot, $file.RelativePath)
+                    Lines = @($file.Lines)
+                }
+            }
+        }
+    }
+
+    if (-not $recipe.HasSurface) {
+        $notes += "This game exposes no client-side network parameters; only the system tier applies."
+    }
+
+    return [ordered]@{
+        Tier = $recipe.Tier
+        Set = @($delta.Set)
+        Restore = @($delta.Restore)
+        ConfigWrites = @($writes)
+        Notes = @($notes)
+    }
 }

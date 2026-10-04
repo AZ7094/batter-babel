@@ -76,3 +76,23 @@ Assert-Equal 'E:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive' 
 Assert-Equal $cs2Exe (Get-NetGameRoot $cs2Exe 0) 'depth 0 leaves the exe path alone'
 Assert-Equal '' (Get-NetGameRoot '' 4) 'empty exe path yields empty root'
 Assert-Equal $cs2Exe (Get-NetGameRoot $cs2Exe -1) 'negative depth behaves as zero'
+
+$root = 'E:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive'
+$cs2Plan = Get-NetTunePlan 'cs2' $null $root
+Assert-Equal 'latency' $cs2Plan.Tier 'cs2 plan names its tier'
+Assert-True ($cs2Plan.Set -contains 'Nagle') 'fresh cs2 plan sets Nagle'
+Assert-Equal 1 $cs2Plan.ConfigWrites.Count 'cs2 plan writes one file'
+Assert-Equal ([IO.Path]::Combine($root, 'game\csgo\cfg\autoexec.cfg')) $cs2Plan.ConfigWrites[0].Path 'cs2 plan resolves the config path'
+Assert-True ($cs2Plan.ConfigWrites[0].Lines -contains 'cl_allow_animated_avatars 0') 'cs2 plan keeps the non-network tweak'
+Assert-True (($cs2Plan.Notes -join ' ') -match 'not a network parameter') 'cs2 plan labels the non-network tweak'
+Assert-Equal 0 (Get-NetTunePlan 'cs2' $null '').ConfigWrites.Count 'cs2 plan with no install root writes nothing'
+Assert-True (((Get-NetTunePlan 'cs2' $null '').Notes -join ' ') -match 'install path') 'cs2 plan with no install root says why'
+
+$limbusPlan = Get-NetTunePlan 'limbus' 'latency' ''
+Assert-Equal 'throughput' $limbusPlan.Tier 'limbus plan names its tier'
+Assert-Equal 0 $limbusPlan.ConfigWrites.Count 'limbus plan writes no file'
+Assert-True (($limbusPlan.Notes -join ' ') -match 'no client-side network parameters') 'limbus plan reports no surface'
+
+$switchPlan = Get-NetTunePlan 'limbus' 'latency' ''
+Assert-True ($switchPlan.Restore -contains 'Nagle') 'switching to throughput plans a Nagle restore'
+Assert-True (-not ($switchPlan.Set -contains 'Nagle')) 'switching to throughput does not plan a Nagle set'
