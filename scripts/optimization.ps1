@@ -1226,6 +1226,7 @@ function Get-RouteProbe {
 # NOTE: both files must also be listed in src-tauri/tauri.conf.json bundle.resources.
 . "$PSScriptRoot\ip-core.ps1"
 . "$PSScriptRoot\cf-probe.ps1"
+. "$PSScriptRoot\net-profiles.ps1"
 
 # NOTE: the Limbus API probe rules and the DoH source list used to live here as
 # $CfDomainCatalog / $CloudFrontEndpoints / $CloudFrontDohSources. All three were defined but never
@@ -1654,6 +1655,222 @@ function Load-TuneState {
         return ($json | ConvertFrom-Json)
     } catch { return $null }
 }
+# --- Per-game network tier: the imperative half the pure plan cannot own ---
+
+# Put one logical tier key back to the value captured in the snapshot. Returns a human note and
+# never throws: a restore that fails must leave the rest of the run intact.
+function Restore-TuneKey {
+    param([string]$Key, $State)
+    if ($null -eq $State) { return "no snapshot available, so $Key was left as it is" }
+    try {
+        $adapterKeywords = @{
+            'InterruptModeration' = '*InterruptModeration'
+            'Eee' = '*EEE'
+            'FlowControl' = '*FlowControl'
+        }
+        if ($adapterKeywords.ContainsKey($Key)) {
+            $kw = $adapterKeywords[$Key]
+            $restored = 0
+            foreach ($prop in @($State.adapterProps.PSObject.Properties)) {
+                foreach ($entry in @($prop.Value.PSObject.Properties)) {
+                    if ($entry.Name -ne $kw) { continue }
+                    $old = $entry.Value
+                    if ($null -eq $old -or "$old" -eq '') { continue }
+                    Set-NetAdapterAdvancedProperty -Name $prop.Name -RegistryKeyword $kw -RegistryValue "$old" -ErrorAction Stop
+                    $restored++
+                }
+            }
+            return "restored $kw on $restored adapter(s)"
+        }
+        switch ($Key) {
+            'Nagle' {
+                $restored = 0
+                foreach ($prop in @($State.nagle.PSObject.Properties)) {
+                    $ifPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($prop.Name)"
+                    if (-not (Test-Path -LiteralPath $ifPath)) { continue }
+                    foreach ($name in (Get-NagleValueNames)) {
+                        $old = $prop.Value.$name
+                        # Null or empty is the ONLY case that deletes. A snapshot value of 0 is a real
+                        # value and has to be written back: the machine may have had TcpAckFrequency
+                        # set long before Batter Babel ever ran, and dropping it would silently change
+                        # a setting the user chose.
+                        if ($null -eq $old -or "$old" -eq '') {
+                            Remove-ItemProperty -Path $ifPath -Name $name -ErrorAction SilentlyContinue
+                        } else {
+                            Set-ItemProperty -Path $ifPath -Name $name -Value ([int]$old) -Type DWord -ErrorAction Stop
+                        }
+                        $restored++
+                    }
+                }
+                return "restored $restored Nagle value(s)"
+            }
+            'AutoTuning' {
+                $old = $State.tcpGlobal.autotuninglevel
+                if ($null -eq $old -or "$old" -eq '') { return 'autotuning had no original value' }
+                & netsh int tcp set global "autotuninglevel=$old" 2>&1 | Out-Null
+                return "autotuning restored to $old"
+            }
+            'Rss' {
+                $old = $State.tcpGlobal.rss
+                if ($null -eq $old -or "$old" -eq '') { return 'rss had no original value' }
+                & netsh int tcp set global "rss=$old" 2>&1 | Out-Null
+                return "rss restored to $old"
+            }
+            'Throttling' {
+                $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+                $done = @()
+                foreach ($name in @('NetworkThrottlingIndex', 'SystemResponsiveness')) {
+                    $old = $State.throttle.$name
+                    if ($null -eq $old -or "$old" -eq '') { continue }
+                    Set-ItemProperty -Path $regPath -Name $name -Value ([int]$old) -Type DWord -ErrorAction Stop
+                    $done += "$name=$old"
+                }
+                if ($done.Count -eq 0) { return 'throttling had no original values' }
+                return "throttling restored: $($done -join ', ')"
+            }
+            'AdapterPower' {
+                $restored = 0
+                foreach ($prop in @($State.adapterPower.PSObject.Properties)) {
+                    if ($null -eq $prop.Value -or "$($prop.Value)" -eq '') { continue }
+                    Set-NetAdapterPowerManagement -Name $prop.Name -AllowComputerToTurnOffDevice "$($prop.Value)" -ErrorAction Stop
+                    $restored++
+                }
+                return "adapter power restored on $restored adapter(s)"
+            }
+            'WifiPower' {
+                $ac = $State.wifiPower.ac
+                $dc = $State.wifiPower.dc
+                if ($null -ne $ac -and "$ac" -ne '') { & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a "$ac" 2>$null | Out-Null }
+                if ($null -ne $dc -and "$dc" -ne '') { & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a "$dc" 2>$null | Out-Null }
+                & powercfg /setactive SCHEME_CURRENT 2>$null | Out-Null
+                return "wifi power restored (ac=$ac dc=$dc)"
+            }
+            default { return "no snapshot restore is implemented for $Key, skipped" }
+        }
+    } catch {
+        return "restoring $Key failed: $($_.Exception.Message)"
+    }
+}
+
+# Apply one tier: write every key the delta lists, then put back every key it says to restore.
+# Returns result items shaped like the rest of the tuner's (id / title / ok / detail).
+function Invoke-TuneTier {
+    param(
+        [System.Collections.IDictionary]$Tier,
+        [System.Collections.IDictionary]$Delta,
+        $State,
+        [System.Collections.Generic.List[string]]$Log
+    )
+    $out = @()
+    $adapterTargets = @{
+        'InterruptModeration' = @{ kw = '*InterruptModeration'; wanted = $Tier.InterruptModeration }
+        'Eee' = @{ kw = '*EEE'; wanted = $Tier.Eee }
+        'FlowControl' = @{ kw = '*FlowControl'; wanted = $Tier.FlowControl }
+    }
+    foreach ($key in @($Delta.Set)) {
+        $item = [ordered]@{ id = "net-set-$key"; title = "$key ($($Tier.Id))"; ok = $false; detail = '' }
+        try {
+            if ($adapterTargets.ContainsKey($key)) {
+                $kw = $adapterTargets[$key].kw
+                $wanted = [int]$adapterTargets[$key].wanted
+                $changed = @()
+                foreach ($adapter in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
+                    $prop = Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $kw -ErrorAction SilentlyContinue
+                    if (-not $prop) { continue }
+                    $valid = @(@($prop.ValidRegistryValues) | Sort-Object { [int]$_ })
+                    if ($valid.Count -eq 0) { continue }
+                    # The tier speaks in intent (0 = off, 1 = on), but drivers publish their own value
+                    # sets, so map it onto the smallest valid value for off and the largest for on.
+                    $target = $valid[0]
+                    if ($wanted -ne 0) { $target = $valid[$valid.Count - 1] }
+                    $current = @($prop.RegistryValue)[0]
+                    if ("$current" -ne "$target") {
+                        Set-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword $kw -RegistryValue "$target" -ErrorAction Stop
+                        $changed += "$($adapter.Name)=$target"
+                    }
+                }
+                $item.ok = $true
+                if ($changed.Count -gt 0) { $item.detail = "changed: $($changed -join ', ')" }
+                else { $item.detail = 'already at the tier value, or the driver does not expose it' }
+            } else {
+                switch ($key) {
+                    'Nagle' {
+                        $applied = 0
+                        foreach ($adapter in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
+                            $guid = $adapter.InterfaceGuid
+                            if (-not $guid) { continue }
+                            $ifPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$guid"
+                            if (-not (Test-Path -LiteralPath $ifPath)) { continue }
+                            foreach ($name in (Get-NagleValueNames)) {
+                                $value = 1
+                                if ($name -eq 'TcpDelAckTicks') { $value = 0 }
+                                Set-ItemProperty -Path $ifPath -Name $name -Value $value -Type DWord -ErrorAction Stop
+                            }
+                            $applied++
+                        }
+                        if ($applied -gt 0) {
+                            $item.ok = $true
+                            $item.detail = "applied to $applied interface(s)"
+                        } else {
+                            $item.detail = 'no writable interface found'
+                        }
+                    }
+                    'AutoTuning' {
+                        & netsh int tcp set global "autotuninglevel=$($Tier.AutoTuning)" 2>&1 | Out-Null
+                        $code = $LASTEXITCODE
+                        $item.ok = ($code -eq 0)
+                        $item.detail = "autotuninglevel=$($Tier.AutoTuning) (netsh exit $code)"
+                    }
+                    'Rss' {
+                        & netsh int tcp set global "rss=$($Tier.Rss)" 2>&1 | Out-Null
+                        $code = $LASTEXITCODE
+                        $item.ok = ($code -eq 0)
+                        $item.detail = "rss=$($Tier.Rss) (netsh exit $code)"
+                    }
+                    'Throttling' {
+                        $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
+                        Set-ItemProperty -Path $regPath -Name 'NetworkThrottlingIndex' -Value 0xFFFFFFFF -Type DWord -ErrorAction Stop
+                        Set-ItemProperty -Path $regPath -Name 'SystemResponsiveness' -Value 10 -Type DWord -ErrorAction Stop
+                        $item.ok = $true
+                        $item.detail = 'NetworkThrottlingIndex disabled, SystemResponsiveness=10'
+                    }
+                    'AdapterPower' {
+                        $applied = 0
+                        foreach ($adapter in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
+                            Set-NetAdapterPowerManagement -Name $adapter.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop
+                            $applied++
+                        }
+                        $item.ok = ($applied -gt 0)
+                        $item.detail = "device power saving disabled on $applied adapter(s)"
+                    }
+                    'WifiPower' {
+                        $wifi = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.MediaType -eq 'Native 802.11' })
+                        & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
+                        & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
+                        & powercfg /setactive SCHEME_CURRENT 2>$null | Out-Null
+                        $item.ok = $true
+                        if ($wifi.Count -gt 0) { $item.detail = "maximum performance ($($wifi.Count) Wi-Fi adapter(s))" }
+                        else { $item.detail = 'maximum performance (no Wi-Fi adapter present)' }
+                    }
+                    default { $item.detail = "no tier apply is implemented for $key, skipped" }
+                }
+            }
+        } catch {
+            $item.ok = $false
+            $item.detail = "failed: $($_.Exception.Message)"
+        }
+        $Log.Add("$key : $($item.detail)")
+        $out += $item
+    }
+    foreach ($key in @($Delta.Restore)) {
+        Write-Tick 60 "Restoring $key to its original value"
+        $note = Restore-TuneKey $key $State
+        $ok = -not ("$note" -match 'failed')
+        $out += [ordered]@{ id = "net-restore-$key"; title = "Restore $key"; ok = $ok; detail = $note }
+        $Log.Add("restore $key : $note")
+    }
+    return @($out)
+}
 
 function Get-WirelessPowerIndex([string]$Output, [string]$Kind) {
     # Built from code points, NOT literal characters: this file must stay pure ASCII, because
@@ -2075,154 +2292,43 @@ if ($Action -eq 'tune-system') {
         }
     }
 
-    # --- 1) TCP low latency: disable Nagle/delayed-ACK per interface ---
-    # Benefits every TCP-based online game (small packets are sent immediately).
-    Write-Tick 10 'TCP low latency (Nagle)'
-    $nagleItem = [ordered]@{ id = 'tcp-nagle'; title = 'TCP low latency (Nagle / delayed ACK off)'; ok = $false; detail = '' }
-    try {
-        $applied = 0
-        foreach ($adapter in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
-            $guid = $adapter.InterfaceGuid
-            if (-not $guid) { continue }
-            $ifPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$guid"
-            if (-not (Test-Path -LiteralPath $ifPath)) { continue }
-            try {
-                Set-ItemProperty -Path $ifPath -Name 'TcpAckFrequency' -Value 1 -Type DWord -ErrorAction Stop
-                Set-ItemProperty -Path $ifPath -Name 'TCPNoDelay' -Value 1 -Type DWord -ErrorAction Stop
-                Set-ItemProperty -Path $ifPath -Name 'TcpDelAckTicks' -Value 0 -Type DWord -ErrorAction Stop
-                $applied++
-            } catch {}
-        }
-        if ($applied -gt 0) {
-            $nagleItem.ok = $true
-            $nagleItem.detail = "applied to $applied interface(s)"
-            $log.Add("Nagle/delayed-ACK disabled on $applied interface(s).")
+    # --- 1) Resolve the game, the tier it should use, and what actually has to change ---
+    $recipe = Get-NetRecipe $GameId
+    $gameName = $GameId
+    if (-not $gameName) { $gameName = 'selected games' }
+    $installRoot = ''
+    if ($GameId -and $Catalog.Contains($GameId)) {
+        $gameName = $Catalog[$GameId].Name
+        $location = $null
+        try { $location = Find-Game $Catalog[$GameId] } catch { $location = $null }
+        if ($location -and $location.Installed -and $location.ExecutablePath) {
+            $installRoot = Get-NetGameRoot $location.ExecutablePath $recipe.ExecutableParentDepth
         } else {
-            $nagleItem.detail = 'no writable interface found (needs admin)'
-            $log.Add('Nagle: no writable interface found.')
+            # Uninstalled, or uninstalled since the catalog scan. No config file this run, but the
+            # tier still applies: the system parameters are what reach the game either way.
+            $log.Add("$gameName is not installed; no game config file will be written.")
         }
-    } catch {
-        $nagleItem.detail = "failed: $($_.Exception.Message)"
-        $log.Add("Nagle failed: $($_.Exception.Message)")
     }
-    $items += $nagleItem
 
-    # --- 2) TCP global tuning ---
-    Write-Tick 24 'TCP global tuning'
-    $tcpItem = [ordered]@{ id = 'tcp-global'; title = 'TCP global tuning'; ok = $false; detail = '' }
-    try {
-        $notes = @()
-        & netsh int tcp set global autotuninglevel=normal 2>&1 | Out-Null
-        $notes += 'autotuning=normal'
-        & netsh int tcp set heuristics disabled 2>&1 | Out-Null
-        $notes += 'heuristics=disabled'
-        & netsh int tcp set global rss=enabled 2>&1 | Out-Null
-        $notes += 'rss=enabled'
-        $tcpItem.ok = $true
-        $tcpItem.detail = ($notes -join ', ')
-        $log.Add("TCP globals: $($notes -join ', ')")
-    } catch {
-        $tcpItem.detail = "failed: $($_.Exception.Message)"
-        $log.Add("TCP globals failed: $($_.Exception.Message)")
+    # appliedTier is absent from snapshots written before this version, and that has to read as
+    # "no tier applied yet" rather than as a failure.
+    $state = Load-TuneState
+    $previousTier = $null
+    if ($state) {
+        $tierProp = $state.PSObject.Properties['appliedTier']
+        if ($tierProp -and $tierProp.Value) { $previousTier = "$($tierProp.Value)" }
     }
-    $items += $tcpItem
 
-    # --- 3) Adapter low-latency properties ---
-    Write-Tick 36 'Adapter low-latency properties'
-    $adapterItem = [ordered]@{ id = 'adapter'; title = 'Adapter low-latency properties'; ok = $false; detail = ''; applied = @() }
-    try {
-        $applied = @()
-        # Registry values are numeric and display names are localised, so "off" is taken as the
-        # smallest valid registry value (0 for all of these on real drivers).
-        $targets = @(
-            @{ kw = '*InterruptModeration'; label = 'interrupt moderation off' },
-            @{ kw = '*EEE';                 label = 'energy-efficient ethernet off' },
-            @{ kw = '*FlowControl';         label = 'flow control off' }
-        )
-        foreach ($a in @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)) {
-            foreach ($t in $targets) {
-                try {
-                    $prop = Get-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $t.kw -ErrorAction SilentlyContinue
-                    if (-not $prop) { continue }
-                    $valid = @($prop.ValidRegistryValues)
-                    if ($valid.Count -eq 0) { continue }
-                    $off = @($valid | Sort-Object { [int]$_ })[0]
-                    $current = @($prop.RegistryValue)[0]
-                    if ("$current" -ne "$off") {
-                        Set-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $t.kw -RegistryValue "$off" -ErrorAction Stop
-                        $applied += "$($a.Name): $($t.label)"
-                    }
-                } catch {}
-            }
-            try {
-                Set-NetAdapterPowerManagement -Name $a.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop
-                $applied += "$($a.Name): device power saving off"
-            } catch {}
-        }
-        $adapterItem.ok = $true
-        if ($applied.Count -gt 0) {
-            $adapterItem.applied = $applied
-            $adapterItem.detail = "$($applied.Count) setting(s) changed"
-        } else {
-            $adapterItem.detail = 'already optimal or driver does not expose these properties'
-        }
-        $log.Add("Adapter properties: $($adapterItem.detail)")
-    } catch {
-        $adapterItem.detail = "failed: $($_.Exception.Message)"
-        $log.Add("Adapter failed: $($_.Exception.Message)")
-    }
-    $items += $adapterItem
+    $plan = Get-NetTunePlan $GameId $previousTier $installRoot
+    $delta = @{ Set = @($plan.Set); Restore = @($plan.Restore) }
+    $shownPrevious = 'none'
+    if ($previousTier) { $shownPrevious = $previousTier }
+    $log.Add("Network tier for ${gameName}: $($plan.Tier) (previous: $shownPrevious)")
+    foreach ($note in @($plan.Notes)) { $log.Add("Note: $note") }
 
-    # --- 4) Windows multimedia network throttling ---
-    Write-Tick 58 'Windows network throttling'
-    $throttleItem = [ordered]@{ id = 'throttle'; title = 'Windows network throttling'; ok = $false; detail = '' }
-    try {
-        $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
-        $old = $null
-        try { $old = (Get-ItemProperty -Path $regPath -Name 'NetworkThrottlingIndex' -ErrorAction Stop).NetworkThrottlingIndex } catch {}
-        Set-ItemProperty -Path $regPath -Name 'NetworkThrottlingIndex' -Value 0xFFFFFFFF -Type DWord -ErrorAction Stop
-        Set-ItemProperty -Path $regPath -Name 'SystemResponsiveness' -Value 10 -Type DWord -ErrorAction Stop
-        $throttleItem.ok = $true
-        $throttleItem.detail = "NetworkThrottlingIndex disabled (was $old), SystemResponsiveness=10"
-        $log.Add("Network throttling: $($throttleItem.detail)")
-    } catch {
-        $throttleItem.detail = "failed: $($_.Exception.Message)"
-        $log.Add("Network throttling failed: $($_.Exception.Message)")
-    }
-    $items += $throttleItem
-
-    # --- 2) Wi-Fi adapter power management -> maximum performance ---
-    Write-Tick 70 'Wi-Fi adapter power mode'
-    $wifiItem = [ordered]@{ id = 'wifi-power'; title = 'Wi-Fi adapter power mode'; ok = $false; detail = '' }
-    try {
-        $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.MediaType -eq 'Native 802.11' })
-        if ($adapters.Count -eq 0) {
-            $wifiItem.detail = 'no Wi-Fi adapter found'
-            $log.Add('No Wi-Fi adapter found, skipped.')
-        } else {
-            $names = @()
-            foreach ($a in $adapters) {
-                try { Set-NetAdapterPowerManagement -Name $a.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction Stop; $names += $a.Name } catch {}
-            }
-            # power scheme: wireless adapter power saving mode -> maximum performance
-            & powercfg /setacvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
-            & powercfg /setdcvalueindex SCHEME_CURRENT 19cbb8fa-5279-450e-9fac-8a3d5fedd0c1 12bbebe6-58d6-4636-95bb-3217ef867c1a 0 2>$null | Out-Null
-            & powercfg /setactive SCHEME_CURRENT 2>$null | Out-Null
-            if ($names.Count -gt 0) {
-                $wifiItem.ok = $true
-                $wifiItem.detail = "set to maximum performance: $($names -join ', ')"
-                $log.Add("Wi-Fi power set to maximum performance: $($names -join ', ')")
-            } else {
-                $wifiItem.detail = 'power scheme updated, adapter property needs admin'
-                $log.Add('Wi-Fi power scheme updated (adapter property needs admin).')
-            }
-        }
-    } catch {
-        $wifiItem.detail = "failed: $($_.Exception.Message)"
-        $log.Add("Wi-Fi power failed: $($_.Exception.Message)")
-    }
-    $items += $wifiItem
-
+    Write-Tick 24 "Applying network tier $($plan.Tier)"
+    $tier = Get-NetTier $plan.Tier
+    foreach ($tierItem in @(Invoke-TuneTier $tier $delta $state $log)) { $items += $tierItem }
     # --- 3) Background bandwidth hogs ---
     Write-Tick 80 'Background bandwidth check'
     $hogItem = [ordered]@{ id = 'bg-programs'; title = 'Background bandwidth check'; ok = $true; detail = ''; found = @() }
@@ -2253,40 +2359,59 @@ if ($Action -eq 'tune-system') {
     }
     $items += $hogItem
 
-    # --- 7) Game-specific extra: CS2 autoexec.cfg (only when CS2 is installed) ---
-    $cs2 = $Catalog['cs2']
-    $cs2Loc = Find-Game $cs2
-    if ($cs2Loc.Installed -and $cs2Loc.ExecutablePath) {
-        Write-Tick 90 'CS2 autoexec.cfg'
-        $cs2Item = [ordered]@{ id = 'cs2-cfg'; title = 'CS2 autoexec.cfg (game-specific)'; ok = $false; detail = '' }
+    # --- 4) Game config files: managed block only, everything outside it is left alone ---
+    $writtenFiles = @()
+    foreach ($cfgWrite in @($plan.ConfigWrites)) {
+        $cfgPath = $cfgWrite.Path
+        Write-Tick 82 "Writing game config $cfgPath"
+        $cfgItem = [ordered]@{ id = 'game-config'; title = "Game config: $([IO.Path]::GetFileName($cfgPath))"; ok = $false; detail = '' }
         try {
-            $root = Split-Path (Split-Path (Split-Path (Split-Path $cs2Loc.ExecutablePath -Parent) -Parent) -Parent) -Parent
-            $cfgDir = Join-Path $root 'game\csgo\cfg'
-            if (Test-Path -LiteralPath $cfgDir) {
-                $cfgPath = Join-Path $cfgDir 'autoexec.cfg'
-                if (Test-Path -LiteralPath $cfgPath) { Copy-Item -LiteralPath $cfgPath -Destination "$cfgPath.batterbabel.bak" -Force }
-                $content = @(
-                    '// Batter Babel network tuning (generated)',
-                    'rate 196608',
-                    'cl_interp 0.031',
-                    'cl_interp_ratio 2',
-                    'cl_net_buffer_ticks 64',
-                    'net_graph 1',
-                    'cl_allow_animated_avatars false'
-                )
-                [System.IO.File]::WriteAllLines($cfgPath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-                $cs2Item.ok = $true
-                $cs2Item.detail = "written: $cfgPath"
-                $log.Add("CS2 autoexec.cfg written: $cfgPath")
+            $cfgDir = Split-Path -Parent $cfgPath
+            if (-not (Test-Path -LiteralPath $cfgDir)) {
+                $cfgItem.detail = "game config directory is missing: $cfgDir"
+                $log.Add("Game config skipped: $cfgDir is missing.")
             } else {
-                $cs2Item.detail = "cfg dir not found: $cfgDir"
-                $log.Add("CS2 cfg dir not found: $cfgDir")
+                $existing = ''
+                if (Test-Path -LiteralPath $cfgPath) {
+                    $existing = [System.IO.File]::ReadAllText($cfgPath, [System.Text.UTF8Encoding]::new($false))
+                }
+                $base = $existing
+                # Only a file that is exactly what this app used to write is replaced. A config the
+                # user wrote themselves has no markers and is not legacy, so the block is appended to
+                # it and their content survives untouched.
+                if ($existing -and -not (Test-HasManagedBlock $existing) -and (Test-NetLegacyBlock $existing)) {
+                    Copy-Item -LiteralPath $cfgPath -Destination "$cfgPath.batterbabel.bak" -Force
+                    $base = ''
+                    $log.Add("Migrated the old Batter Babel autoexec.cfg (backup: $cfgPath.batterbabel.bak)")
+                }
+                $updated = Merge-ManagedBlock $base $cfgWrite.Lines
+                [System.IO.File]::WriteAllText($cfgPath, $updated, [System.Text.UTF8Encoding]::new($false))
+                $cfgItem.ok = $true
+                $cfgItem.detail = "written: $cfgPath"
+                $writtenFiles += $cfgPath
+                $log.Add("Game config written: $cfgPath")
             }
         } catch {
-            $cs2Item.detail = "failed: $($_.Exception.Message)"
-            $log.Add("CS2 cfg failed: $($_.Exception.Message)")
+            $cfgItem.detail = "failed: $($_.Exception.Message)"
+            $log.Add("Game config failed: $($_.Exception.Message)")
         }
-        $items += $cs2Item
+        $items += $cfgItem
+    }
+
+    # --- 5) Record what is active now, so restore-tune and the next run can see it ---
+    $record = Load-TuneState
+    if ($record) {
+        $knownFiles = @()
+        $filesProp = $record.PSObject.Properties['managedConfigFiles']
+        if ($filesProp) { $knownFiles = @($filesProp.Value) }
+        # Union rather than replace: tuning a game that has no config surface must not forget files
+        # that are still carrying a Batter Babel block from an earlier game.
+        $allFiles = @(@($knownFiles) + @($writtenFiles) | Where-Object { $_ } | Select-Object -Unique)
+        $record | Add-Member -NotePropertyName appliedTier -NotePropertyValue $plan.Tier -Force
+        $record | Add-Member -NotePropertyName managedConfigFiles -NotePropertyValue ([string[]]$allFiles) -Force
+        Save-TuneState $record | Out-Null
+    } else {
+        $log.Add('No snapshot available, so the active tier was not recorded.')
     }
 
     $log.Add('=== system tune done ===')
