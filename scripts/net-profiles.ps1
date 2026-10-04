@@ -194,3 +194,110 @@ function Get-NetTierDelta {
 
     return @{ Set = $set; Restore = $restore }
 }
+
+# Managed block markers. Every game config uses this one marker pair, and text
+# outside the pair is never touched.
+$NetBlockStart = '// >>> Batter Babel >>>'
+$NetBlockEnd = '// <<< Batter Babel <<<'
+
+# Exactly what 0.10.1 and earlier wrote into autoexec.cfg. Recognised only so an
+# old-format file can be migrated; a user's own config must not match this.
+$NetLegacyLines = @(
+    '// Batter Babel network tuning (generated)',
+    'rate 196608',
+    'cl_interp 0.031',
+    'cl_interp_ratio 2',
+    'cl_net_buffer_ticks 64',
+    'net_graph 1',
+    'cl_allow_animated_avatars false'
+)
+
+function Test-HasManagedBlock {
+    param([string]$Text)
+    if (-not $Text) { return $false }
+    return ($Text.Contains($NetBlockStart) -and $Text.Contains($NetBlockEnd))
+}
+
+function Merge-ManagedBlock {
+    param([string]$Text, [string[]]$Lines)
+    $original = $Text
+    if ($null -eq $original) { $original = '' }
+    $text = ($original -replace "`r`n", "`n") -replace "`n", "`r`n"
+
+    $hasStart = $text.Contains($NetBlockStart)
+    $hasEnd = $text.Contains($NetBlockEnd)
+    if ($hasStart -ne $hasEnd) {
+        # A half-written block means the file is in a state we do not
+        # understand. Return it exactly as it arrived instead of guessing where
+        # the block was going to end and eating whatever follows.
+        return $original
+    }
+
+    $body = @()
+    if ($null -ne $Lines) { $body = @($Lines) }
+    $all = @($NetBlockStart) + $body + @($NetBlockEnd)
+    $block = ($all -join "`r`n") + "`r`n"
+
+    if (-not $hasStart) {
+        if ($text.Length -gt 0 -and -not $text.EndsWith("`r`n")) { $text += "`r`n" }
+        return $text + $block
+    }
+
+    # Index splice, not a greedy regex: take the first start marker and the
+    # first end marker after it, so a second block later in the file survives.
+    $start = $text.IndexOf($NetBlockStart)
+    $end = $text.IndexOf($NetBlockEnd, $start)
+    $after = $end + $NetBlockEnd.Length
+    if ($after + 2 -le $text.Length -and $text.Substring($after, 2) -eq "`r`n") { $after += 2 }
+    return $text.Substring(0, $start) + $block + $text.Substring($after)
+}
+
+function Remove-ManagedBlock {
+    param([string]$Text)
+    $original = $Text
+    if ($null -eq $original) { $original = '' }
+    $text = ($original -replace "`r`n", "`n") -replace "`n", "`r`n"
+
+    if (-not $text.Contains($NetBlockStart) -or -not $text.Contains($NetBlockEnd)) {
+        return $original
+    }
+
+    $start = $text.IndexOf($NetBlockStart)
+    $end = $text.IndexOf($NetBlockEnd, $start)
+    $after = $end + $NetBlockEnd.Length
+    if ($after + 2 -le $text.Length -and $text.Substring($after, 2) -eq "`r`n") { $after += 2 }
+    return $text.Substring(0, $start) + $text.Substring($after)
+}
+
+function Test-NetLegacyBlock {
+    param([string]$Text)
+    if (-not $Text) { return $false }
+    $seen = @()
+    foreach ($line in ($Text -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed) { $seen += $trimmed }
+    }
+    if ($seen.Count -ne $NetLegacyLines.Count) { return $false }
+    foreach ($want in $NetLegacyLines) {
+        $found = $false
+        foreach ($got in $seen) {
+            if ($got -eq $want) { $found = $true; break }
+        }
+        if (-not $found) { return $false }
+    }
+    return $true
+}
+
+function Get-NetGameRoot {
+    param([string]$ExecutablePath, [int]$ParentDepth)
+    if (-not $ExecutablePath) { return '' }
+    $depth = $ParentDepth
+    if ($depth -lt 0) { $depth = 0 }
+    $path = $ExecutablePath
+    for ($i = 0; $i -lt $depth; $i++) {
+        $parent = Split-Path -Parent $path
+        if (-not $parent) { break }
+        $path = $parent
+    }
+    return $path
+}

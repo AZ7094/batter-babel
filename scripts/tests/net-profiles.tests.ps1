@@ -44,3 +44,35 @@ $freshTp = Get-NetTierDelta $null 'throughput'
 Assert-True ($freshTp.Restore -contains 'Nagle') 'fresh throughput apply restores Nagle'
 
 Assert-Equal 'TcpAckFrequency,TCPNoDelay,TcpDelAckTicks' ((Get-NagleValueNames) -join ',') 'Nagle triad names'
+
+$lines = @('cl_allow_animated_avatars 0')
+$merged = Merge-ManagedBlock "host_writeconfig`r`n" $lines
+Assert-True (Test-HasManagedBlock $merged) 'merge inserts a complete block'
+Assert-True ($merged -match 'host_writeconfig') 'merge keeps text outside the block'
+Assert-Equal $merged (Merge-ManagedBlock $merged $lines) 'merge is idempotent'
+Assert-Equal 1 ([regex]::Matches($merged, [regex]::Escape('// >>> Batter Babel >>>')).Count) 'merge leaves one start marker'
+
+$replaced = Merge-ManagedBlock $merged @('cl_allow_animated_avatars 1')
+Assert-True ($replaced -match 'cl_allow_animated_avatars 1') 'merge replaces the block body'
+Assert-True (-not ($replaced -match 'cl_allow_animated_avatars 0')) 'merge drops the old block body'
+Assert-Equal 1 ([regex]::Matches($replaced, [regex]::Escape('// >>> Batter Babel >>>')).Count) 'replace leaves one start marker'
+
+$half = "// >>> Batter Babel >>>`r`ncl_allow_animated_avatars 0`r`n"
+Assert-Equal $half (Merge-ManagedBlock $half $lines) 'incomplete markers are untouched on merge'
+Assert-Equal $half (Remove-ManagedBlock $half) 'incomplete markers are untouched on remove'
+Assert-Equal "host_writeconfig`r`n" (Remove-ManagedBlock $merged) 'remove strips the block and keeps the rest'
+Assert-Equal "host_writeconfig`r`n" (Remove-ManagedBlock "host_writeconfig`r`n") 'remove leaves a file with no block unchanged'
+Assert-Equal '' (Remove-ManagedBlock $null) 'remove tolerates null'
+Assert-Equal $false (Test-HasManagedBlock '') 'empty text has no block'
+
+$legacy = @('// Batter Babel network tuning (generated)','rate 196608','cl_interp 0.031','cl_interp_ratio 2','cl_net_buffer_ticks 64','net_graph 1','cl_allow_animated_avatars false') -join "`r`n"
+Assert-True (Test-NetLegacyBlock $legacy) 'legacy output is recognised'
+Assert-True (-not (Test-NetLegacyBlock "host_writeconfig`r`n")) 'foreign config is not legacy'
+Assert-True (-not (Test-NetLegacyBlock '')) 'empty text is not legacy'
+Assert-True (-not (Test-NetLegacyBlock ($legacy + "`r`nbind f1 noclip"))) 'a legacy file with a user line added is not legacy'
+
+$cs2Exe = 'E:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe'
+Assert-Equal 'E:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive' (Get-NetGameRoot $cs2Exe 4) 'depth 4 reaches the install root'
+Assert-Equal $cs2Exe (Get-NetGameRoot $cs2Exe 0) 'depth 0 leaves the exe path alone'
+Assert-Equal '' (Get-NetGameRoot '' 4) 'empty exe path yields empty root'
+Assert-Equal $cs2Exe (Get-NetGameRoot $cs2Exe -1) 'negative depth behaves as zero'
