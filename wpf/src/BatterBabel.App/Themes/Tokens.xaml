@@ -1,0 +1,82 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        产品设计 token。一手来源：java/babel-desktop/src/main/resources/batterbabel/desktop/ui/fxml/bb.css:8-49
+        （FXML 原生界面，1020x760，是 WPF 最接近的视觉参照）与 src/public/app.css:1-16（Web 版）。
+        规则同 bb.css：每个颜色/字号只在这里定义一次，控件样式只引用不写字面量。
+
+        字体策略：WPF 的 FontFamily 支持逗号回退列表，因此 "Segoe UI, Microsoft YaHei UI, Microsoft YaHei"
+        等价于 CSS 的 font-family 栈 —— 拉丁字形走 Segoe UI，中文回退到雅黑。
+        原型阶段不嵌入 src/public/fonts（MiSans/Inter 合计 ~25MB，且 MiSans 已装在系统），
+        是否随包分发字体留作后续决策（见 BB-WPF-PROTOTYPE.md）。
+    -->
+
+    <!-- surfaces -->
+    <SolidColorBrush x:Key="BgBrush" Color="#0A0E12"/>
+    <SolidColorBrush x:Key="BarBrush" Color="#0C1116"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#11171D"/>
+    <SolidColorBrush x:Key="Surface2Brush" Color="#151D24"/>
+    <SolidColorBrush x:Key="LineBrush" Color="#222B34"/>
+    <SolidColorBrush x:Key="LineSoftBrush" Color="#1A222A"/>
+    <SolidColorBrush x:Key="PanelInsetBrush" Color="#0D1318"/>
+
+    <!-- ink -->
+    <SolidColorBrush x:Key="InkBrush" Color="#E9EEF4"/>
+    <SolidColorBrush x:Key="Ink2Brush" Color="#C2CCD7"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#8B98A6"/>
+    <SolidColorBrush x:Key="DimBrush" Color="#6B7885"/>
+
+    <!-- accents -->
+    <SolidColorBrush x:Key="AccentBrush" Color="#C8FF53"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#D9FF86"/>
+    <SolidColorBrush x:Key="AccentInkBrush" Color="#101A06"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="#FF7B7B"/>
+    <SolidColorBrush x:Key="CdnBrush" Color="#46B3D6"/>
+    <SolidColorBrush x:Key="CdnInkBrush" Color="#A9E2F5"/>
+    <SolidColorBrush x:Key="ApiBrush" Color="#DD9645"/>
+    <SolidColorBrush x:Key="ApiInkBrush" Color="#F2CB96"/>
+
+    <!-- buttons -->
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#33404C"/>
+    <SolidColorBrush x:Key="ButtonBorderHoverBrush" Color="#465764"/>
+    <SolidColorBrush x:Key="CompactBorderBrush" Color="#2C3742"/>
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#1D262E"/>
+
+    <!-- status pill -->
+    <SolidColorBrush x:Key="StatusPillBrush" Color="#1A2317"/>
+    <SolidColorBrush x:Key="StatusPillBorderBrush" Color="#2C3A26"/>
+    <SolidColorBrush x:Key="StatusPillInkBrush" Color="#CFE4A8"/>
+
+    <!-- route cards -->
+    <SolidColorBrush x:Key="CdnIconBgBrush" Color="#17303C"/>
+    <SolidColorBrush x:Key="ApiIconBgBrush" Color="#33251A"/>
+    <SolidColorBrush x:Key="CdnBadgeBgBrush" Color="#14313D"/>
+    <SolidColorBrush x:Key="ApiBadgeBgBrush" Color="#362517"/>
+    <SolidColorBrush x:Key="CardBorderCdnBrush" Color="#1D2A33"/>
+    <SolidColorBrush x:Key="CardBorderApiBrush" Color="#2A2118"/>
+    <SolidColorBrush x:Key="DomainCdnBrush" Color="#93A3B2"/>
+    <SolidColorBrush x:Key="DomainApiBrush" Color="#B7A795"/>
+    <SolidColorBrush x:Key="AddrCdnBrush" Color="#8FA3B2"/>
+    <SolidColorBrush x:Key="AddrApiBrush" Color="#B3A08A"/>
+    <SolidColorBrush x:Key="DividerBrush" Color="#1FFFFFFF"/>
+
+    <!-- log -->
+    <SolidColorBrush x:Key="ActivityInkBrush" Color="#93A3B1"/>
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#2F3A45"/>
+
+    <LinearGradientBrush x:Key="CdnCardBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#12202A" Offset="0"/>
+        <GradientStop Color="#0F161D" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ApiCardBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#221A13" Offset="0"/>
+        <GradientStop Color="#171310" Offset="1"/>
+    </LinearGradientBrush>
+
+    <!-- type -->
+    <FontFamily x:Key="UiFont">Segoe UI, Microsoft YaHei UI, Microsoft YaHei</FontFamily>
+    <FontFamily x:Key="MonoFont">Consolas, Microsoft YaHei UI</FontFamily>
+    <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+</ResourceDictionary>

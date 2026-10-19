@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Batter Babel">
+  <title>Batter Babel</title>
+  <!-- 主图标是 Arial Black 渲染的栅格（1024 PNG / ICO 六帧）。这里内嵌同一张 PNG，
+       保证 SVG 与 .ico/.png 完全一致；需要纯矢量时用 batter-babel-1024.png 重新描摹。 -->
+  <image href="batter-babel-1024.png" x="0" y="0" width="1024" height="1024"/>
+</svg>

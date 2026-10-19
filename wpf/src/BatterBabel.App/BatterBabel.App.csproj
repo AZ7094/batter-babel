@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WPF 原型主程序（WinExe）。
+    * 目标框架 net10.0-windows：.NET 10 是 LTS（EOL 2028-11-14），WPF 只有 Windows 目标可用。
+    * 依赖只有官方 Microsoft.Web.WebView2 SDK；UI 复用 src/web 下的 HTML/CSS/JS。
+    * ApplicationManifest：PerMonitorV2 DPI + asInvoker（只有写入 hosts 时才通过 runas 提权）。
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>BatterBabel</AssemblyName>
+    <RootNamespace>BatterBabel.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../../../assets/icons/batter-babel.ico</ApplicationIcon>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BatterBabel.Core\BatterBabel.Core.csproj" />
+    <!-- WebView2 是官方 SDK（非自研）：复用已发布版的 HTML 界面，宿主只做通道与命令适配。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <!-- 便携目录：把页面与图标放到 exe 旁的 assets/，脱离仓库也能跑（PageAssets 优先读这里）。
+       页面源在 src/web，构建时整体复制到输出 assets/。 -->
+  <ItemGroup>
+    <Content Include="..\..\..\src\web\**\*"
+             Link="assets\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\..\assets\icons\batter-babel.ico"
+             Link="assets\batter-babel.ico"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

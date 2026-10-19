@@ -1,0 +1,12 @@
+<Window x:Class="BatterBabel.App.Web.WebShellWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Batter Babel"
+        Width="1120" Height="840"
+        MinWidth="760" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        Background="#F6F6F2">
+    <!-- 复用的就是 Tauri 版 src/public 页面：这里的 Window 只提供一块 WebView2 画布，不放任何业务控件。 -->
+    <wv2:WebView2 x:Name="View" />
+</Window>

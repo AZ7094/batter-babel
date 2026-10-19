@@ -1,0 +1,442 @@
+<Window x:Class="BatterBabel.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:BatterBabel.App.ViewModels"
+        Title="Batter Babel"
+        Width="1020" Height="792"
+        MinWidth="900" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BgBrush}"
+        FontFamily="{StaticResource UiFont}"
+        FontSize="13"
+        Foreground="{StaticResource InkBrush}"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <!--
+        视觉参照：java/.../fxml/Main.fxml（1020x760 原生 JavaFX 界面，截图见 build/screenshots/fxml/bb-fxml-main-1.0.png）。
+        布局自上而下：品牌栏 → 控制面板（含进度条）→ 3 行提示 → 两张线路卡片 → hosts 路径 → 运行日志。
+        所有颜色/字号来自 Themes/Tokens.xaml，与 bb.css:8-49 一一对应，这里不写字面量。
+    -->
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- 中部（控制面板/提示/卡片/hosts）可滚动 -->
+            <RowDefinition Height="*"/>
+            <!-- 运行日志固定在底部，自己滚 -->
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============================================================ 品牌栏 -->
+        <Border Grid.Row="0"
+                Background="{StaticResource BarBrush}"
+                BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="20,11">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Width="26" Height="26" CornerRadius="8" Background="{StaticResource AccentBrush}">
+                    <TextBlock Text="B"
+                               FontSize="15"
+                               FontWeight="ExtraBold"
+                               Foreground="{StaticResource AccentInkBrush}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                </Border>
+
+                <StackPanel Grid.Column="1" Margin="9,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="Batter Babel" Style="{StaticResource Text.BrandName}"/>
+                    <TextBlock Text="游戏网络优选 · WPF 原型（模拟探测）" Style="{StaticResource Text.BrandCaption}"/>
+                </StackPanel>
+
+                <Border Grid.Column="2" Style="{StaticResource Pill}" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="6" Height="6" Fill="{StaticResource AccentBrush}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Text.StatusPill}"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- ============================================================== 内容 -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="20,12,20,6">
+
+                <!-- 控制面板 -->
+                <Border Style="{StaticResource Surface}" Padding="14,11" Margin="0,0,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="游戏" Style="{StaticResource Text.PanelLabel}" Margin="0,0,10,0"/>
+                            <ComboBox Grid.Column="1"
+                                      Style="{StaticResource ComboBox.Bb}"
+                                      Margin="0,0,16,0"
+                                      ItemsSource="{Binding Games}"
+                                      SelectedItem="{Binding SelectedGame, Mode=TwoWay}">
+                                <!-- 必须用 ItemTemplate 而不是 DisplayMemberPath：自绘模板的
+                                     SelectionBoxItemTemplate 只来自 ItemTemplate，用 DisplayMemberPath
+                                     时选中区会退化成 ToString()（会显示整条 record 文本）。 -->
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                <Button Style="{StaticResource Button.Primary}"
+                                        Command="{Binding StartCommand}"
+                                        Margin="0,0,8,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE945;" Style="{StaticResource Text.Icon}" FontSize="12"
+                                                   Foreground="{StaticResource AccentInkBrush}" Margin="0,0,7,0"/>
+                                        <TextBlock Text="开始优选" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Button.Secondary}"
+                                        Command="{Binding WriteHostsCommand}"
+                                        Content="写入 hosts"
+                                        Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource Button.Quiet}"
+                                        Command="{Binding RestoreHostsCommand}"
+                                        Content="还原 hosts"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1"
+                                BorderBrush="{StaticResource LineSoftBrush}"
+                                BorderThickness="0,1,0,0"
+                                Margin="0,10,0,0"
+                                Padding="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource Button.Compact}"
+                                            Command="{Binding DetectGameCommand}"
+                                            Content="系统操作"
+                                            Margin="0,0,6,0"/>
+                                    <Button Style="{StaticResource Button.Compact}"
+                                            Command="{Binding BoostCommand}"
+                                            Content="加速游戏"
+                                            Margin="0,0,6,0"/>
+                                    <Button Style="{StaticResource Button.Compact}"
+                                            Command="{Binding TuneSystemCommand}"
+                                            Content="系统调优"
+                                            Margin="0,0,6,0"/>
+                                    <Button Style="{StaticResource Button.CompactQuiet}"
+                                            Command="{Binding RestoreSystemCommand}"
+                                            Content="还原系统调优"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding MeasuredText}"
+                                               Style="{StaticResource Text.Muted}"
+                                               HorizontalAlignment="Right"/>
+                                    <TextBlock Text="{Binding ProgressText}"
+                                               Style="{StaticResource Text.Muted}"
+                                               HorizontalAlignment="Right"
+                                               Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <ProgressBar Grid.Row="2"
+                                     Style="{StaticResource ProgressBar.Bb}"
+                                     Minimum="0" Maximum="100"
+                                     Value="{Binding Progress, Mode=OneWay}"
+                                     Margin="0,10,0,0"/>
+                    </Grid>
+                </Border>
+
+                <!-- 提示 3 行（FXML 版把帮助文案常驻在控制面板下方，键宽 74） -->
+                <Grid Margin="2,10,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="74"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="开始优选" Style="{StaticResource Text.HintKey}"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1"
+                               Text="测试所选游戏的 CDN / API 线路，测量过程不会修改 hosts。"
+                               Style="{StaticResource Text.HintText}"/>
+
+                    <TextBlock Grid.Row="1" Text="写入 hosts" Style="{StaticResource Text.HintKey}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,4,0,0"
+                               Text="将优选结果应用到系统 hosts，需要同意管理员授权。"
+                               Style="{StaticResource Text.HintText}"/>
+
+                    <TextBlock Grid.Row="2" Text="还原 hosts" Style="{StaticResource Text.HintKeyDanger}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Style="{StaticResource Text.HintText}"
+                               Text="如果应用后遇到问题，点这里恢复最近一次备份（原型阶段只会如实拒绝，不会写入）。"/>
+                </Grid>
+
+                <!-- 线路卡片：两张等宽，两列 -->
+                <ItemsControl ItemsSource="{Binding Cards}" Margin="0,0,0,12">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Rows="1"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Margin" Value="0,0,12,0"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:RouteCardViewModel}">
+                            <Border x:Name="Card"
+                                    CornerRadius="10"
+                                    BorderThickness="1"
+                                    BorderBrush="{StaticResource CardBorderCdnBrush}"
+                                    Background="{StaticResource CdnCardBrush}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- 左侧 3px 彩色条：WPF 的 Border 不能逐边设色，用窄 Border 叠出来 -->
+                                    <Border x:Name="AccentStrip" Grid.Column="0" Width="3"
+                                            CornerRadius="9,0,0,9"
+                                            Background="{StaticResource CdnBrush}"/>
+
+                                    <StackPanel Grid.Column="1" Margin="12,11,13,10" MinHeight="170">
+
+                                        <!-- 卡片头：图标 + 标题 + 右角标 -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border x:Name="IconBox" Width="30" Height="30" CornerRadius="8"
+                                                    Background="{StaticResource CdnIconBgBrush}">
+                                                <TextBlock x:Name="IconGlyph"
+                                                           Text="{Binding Glyph}"
+                                                           Style="{StaticResource Text.Icon}"
+                                                           FontSize="14"
+                                                           Foreground="{StaticResource CdnInkBrush}"/>
+                                            </Border>
+
+                                            <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Label}"
+                                                           FontSize="13" FontWeight="Bold"
+                                                           Foreground="{StaticResource InkBrush}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Caption}"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           Margin="0,2,0,0"/>
+                                            </StackPanel>
+
+                                            <Border x:Name="Badge" Grid.Column="2" CornerRadius="5" Padding="7,3"
+                                                    Background="{StaticResource CdnBadgeBgBrush}"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock x:Name="BadgeText"
+                                                           Text="{Binding BadgeText}"
+                                                           FontSize="10.5"
+                                                           FontWeight="Bold"
+                                                           Foreground="{StaticResource CdnInkBrush}"/>
+                                            </Border>
+                                        </Grid>
+
+                                        <TextBlock x:Name="Domains"
+                                                   Text="{Binding DomainsText}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource DomainCdnBrush}"
+                                                   TextWrapping="Wrap"
+                                                   LineHeight="17"
+                                                   Margin="0,9,0,0"/>
+
+                                        <!-- 结果区：空态 / 行列表叠在同一格 -->
+                                        <Border BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,1,0,0"
+                                                Margin="0,9,0,0" Padding="0,8,0,0">
+                                            <Grid>
+                                                <TextBlock x:Name="Empty"
+                                                           Text="{Binding Placeholder}"
+                                                           FontSize="11.5"
+                                                           Foreground="{StaticResource DimBrush}"
+                                                           Margin="0,2,0,0"/>
+
+                                                <ItemsControl ItemsSource="{Binding Items}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type vm:RouteRowViewModel}">
+                                                            <Grid Margin="0,2">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding Mark}"
+                                                                           FontSize="8"
+                                                                           Foreground="{StaticResource AccentBrush}"
+                                                                           VerticalAlignment="Center"
+                                                                           Margin="0,0,6,0"/>
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding Domain}"
+                                                                           FontSize="12.5"
+                                                                           Foreground="{StaticResource InkBrush}"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           VerticalAlignment="Center"
+                                                                           ToolTip="{Binding Detail}"/>
+                                                                <TextBlock Grid.Column="2"
+                                                                           Text="{Binding Value}"
+                                                                           FontFamily="{StaticResource MonoFont}"
+                                                                           FontSize="11"
+                                                                           Foreground="{StaticResource MutedBrush}"
+                                                                           VerticalAlignment="Center"
+                                                                           Margin="10,0,0,0"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 卡片页脚 -->
+                                        <Border BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,1,0,0"
+                                                Margin="0,9,0,0" Padding="0,7,0,0">
+                                            <Grid>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE946;" Style="{StaticResource Text.Icon}" FontSize="10"
+                                                               Foreground="{StaticResource DomainCdnBrush}" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding StateText}"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding SummaryText}"
+                                                           FontSize="10.5"
+                                                           Foreground="{StaticResource MutedBrush}"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           Margin="8,0,0,0"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <DataTemplate.Triggers>
+                                <!-- 空态与结果列表互斥 -->
+                                <DataTrigger Binding="{Binding HasResults}" Value="True">
+                                    <Setter TargetName="Empty" Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+
+                                <!-- API 卡片：橙色调，与 CDN 蓝形成对照 -->
+                                <DataTrigger Binding="{Binding Accent}" Value="{x:Static vm:CardAccent.Api}">
+                                    <Setter TargetName="Card" Property="Background" Value="{StaticResource ApiCardBrush}"/>
+                                    <Setter TargetName="Card" Property="BorderBrush" Value="{StaticResource CardBorderApiBrush}"/>
+                                    <Setter TargetName="AccentStrip" Property="Background" Value="{StaticResource ApiBrush}"/>
+                                    <Setter TargetName="IconBox" Property="Background" Value="{StaticResource ApiIconBgBrush}"/>
+                                    <Setter TargetName="IconGlyph" Property="Foreground" Value="{StaticResource ApiInkBrush}"/>
+                                    <Setter TargetName="Badge" Property="Background" Value="{StaticResource ApiBadgeBgBrush}"/>
+                                    <Setter TargetName="BadgeText" Property="Foreground" Value="{StaticResource ApiInkBrush}"/>
+                                    <Setter TargetName="Domains" Property="Foreground" Value="{StaticResource DomainApiBrush}"/>
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- hosts 路径条 -->
+                <Border Style="{StaticResource Surface}" CornerRadius="8" Padding="12,7" Margin="0,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xEA18;" Style="{StaticResource Text.Icon}" FontSize="11"
+                                   Foreground="{StaticResource MutedBrush}" Margin="0,0,9,0"/>
+                        <TextBlock Text="hosts" Style="{StaticResource Text.Muted}" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding HostsPath}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 运行日志：固定在底部（不随上方内容滚动，日志自己滚），避免窗口底边把最新一行切掉 -->
+        <Border Grid.Row="2" Style="{StaticResource Surface}" CornerRadius="8" Background="{StaticResource PanelInsetBrush}"
+                Padding="12,9,12,8" Margin="20,0,20,14">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,7">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&gt;_" FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"
+                                   Margin="0,0,7,0"/>
+                        <TextBlock Text="运行日志" Style="{StaticResource Text.SectionTitle}" FontSize="12.5"/>
+                    </StackPanel>
+                    <TextBlock Text="最近 100 条" Style="{StaticResource Text.Muted}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+
+                <ScrollViewer x:Name="LogScroll" Grid.Row="1" MaxHeight="138"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Logs}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:LogEntry}">
+                                <Grid Margin="0,1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Time}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11.5"
+                                               Foreground="{StaticResource DimBrush}"
+                                               VerticalAlignment="Top"
+                                               Margin="0,0,10,0"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Text}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11.5"
+                                               Foreground="{StaticResource ActivityInkBrush}"
+                                               TextWrapping="Wrap"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

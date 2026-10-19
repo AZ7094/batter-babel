@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batter Babel · 游戏网络优选</title>
+<link rel="icon" href="icon.png?v=3" />
+<link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><img src="icon.png" alt="" width="40" height="40"></span>
+      <h1>Batter Babel</h1>
+      <span class="rule" aria-hidden="true"></span>
+      <p class="sub">游戏网络优选</p>
+    </div>
+    <p class="hint" id="hint">正在检测游戏…</p>
+  </header>
+
+  <div class="toolbar" role="toolbar" aria-label="主要操作">
+    <label class="field">
+      <span class="field-label">游戏</span>
+      <span class="select-wrap">
+        <select id="game-select" aria-label="选择游戏"><option value="">检测中…</option></select>
+      </span>
+    </label>
+
+    <button type="button" class="btn" id="btn-detect">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+      检测游戏
+    </button>
+
+    <button type="button" class="btn btn-primary" id="optimize">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></svg>
+      开始优选
+    </button>
+
+    <button type="button" class="btn" id="btn-apply" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m7.5 9.5 4.5 5 4.5-5"/><path d="M4.5 19.5h15"/></svg>
+      写入 hosts
+    </button>
+
+    <button type="button" class="btn" id="btn-restore">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 2.2 6.4"/><path d="M4 4.5V10h5.5"/></svg>
+      还原 hosts
+    </button>
+
+    <button type="button" class="btn" id="btn-boost" disabled>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10a4 4 0 0 1 4 4v1a3 3 0 0 1-5.4 1.8L14 12.5H10l-1.6 2.3A3 3 0 0 1 3 13v-1a4 4 0 0 1 4-4Z"/><path d="M8 11.5h1.5"/></svg>
+      <span id="boost-label">加速游戏</span>
+    </button>
+
+  </div>
+
+  <div class="progress-row">
+    <div class="track" id="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <span class="fill" id="fill"></span>
+    </div>
+    <span class="pct" id="pct">等待开始 · 0%</span>
+    <div class="toolbar-tail">
+      <button type="button" class="btn btn-quiet" id="btn-tune">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
+        系统调优
+      </button>
+      <button type="button" class="btn btn-quiet" id="btn-restore-tune">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 10a7.5 7.5 0 1 1 2 5.9"/><path d="M4.5 4.8V10H9.7"/></svg>
+        还原系统调优
+      </button>
+    </div>
+  </div>
+
+  <div class="notes">
+    <p>开始优选：测试所选游戏的 CDN / API 线路，测速过程不会修改 hosts。</p>
+    <p>写入 hosts：将优选结果应用到系统 hosts，需要同意管理员授权。</p>
+    <p class="warn"><b>还原 hosts：</b>如果应用后遇到问题，可移除 Batter Babel 写入的 hosts 标记块。</p>
+  </div>
+
+  <p class="inline-note" id="inline-note" role="status" hidden></p>
+
+  <section class="cards" id="cards" aria-label="线路优选结果"></section>
+
+  <p class="hosts">hosts: <span id="hosts-path">C:\Windows\System32\drivers\etc\hosts</span></p>
+
+  <section class="logbox" aria-labelledby="log-title">
+    <div class="logbox-head">
+      <h2 id="log-title">运行日志</h2>
+      <span class="log-meta" id="log-meta">0 条</span>
+    </div>
+    <ol class="log" id="log" aria-live="polite" aria-relevant="additions"></ol>
+  </section>
+
+</div>
+
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

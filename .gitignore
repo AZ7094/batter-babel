@@ -1,36 +1,15 @@
-# Rust / Tauri build output
-src-tauri/target/
-src-tauri/gen/schemas/
-
-# Dependencies (legacy web build)
-node_modules/
-
-# Build output
+# build output
+bin/
+obj/
 dist/
-out/
+publish/
+*.user
+*.suo
+.vs/
 
-# Tauri installer output, in case it is ever bundled into the repo root
-batter-babel.exe
-uninstall.exe
-_up_/
-*.msi
-
-# Logs
+# local tooling / scratch
+.tools/
+p0/
+evidence/
 *.log
-npm-debug.log*
-
-# OS / editor
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-# Local config
-*.local
-.env
-
-# Exported design conversations are working notes, not project source
-*对话导出*.md
-
-# Promo video verification screenshots; the rendered mp4/gif and the generator are committed
-media/preview/
+*.tmp

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    业务核心：不引用任何 UI / WPF / Windows 专属程序集。
+    WPF 原型阶段只放三样东西：
+      1) 从 scripts/*.ps1 与 java/ 迁移过来的领域模型（游戏目录、线路分组、探测结果）；
+      2) 纯函数排序算法（Get-ProbeMedian / Get-ProbeResultRank / Select-ProbeBest 的 C# 复刻）；
+      3) 明确标注「模拟」的数据源与「拒绝真实写入」的 hosts 契约实现。
+
+    这条依赖边（App -> Core，Core -/-> App）就是「UI/业务隔离」的证据：
+    Core 能在没有 WPF 的 net10.0 控制台里被 tools/BatterBabel.SelfCheck 直接跑通。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>BatterBabel.Core</RootNamespace>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+</Project>

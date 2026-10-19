@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    S9 系统网络调优的检查工具：只驱动 BatterBabel.Core.Tuning.SystemTuning，不自己拼 netsh。
+    net10.0-windows 是因为它是给 Windows 用的运维工具（Core 本身仍是 net10.0，不引 WPF）。
+    退出码：0 全部通过 / 1 失败 / 2 需要管理员（ELEVATION_REQUIRED）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>BatterBabel.TuneCheck</AssemblyName>
+    <RootNamespace>BatterBabel.TuneCheck</RootNamespace>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BatterBabel.Core\BatterBabel.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,113 +1,74 @@
 # Batter Babel
 
-**English** | [简体中文](README.zh-CN.md)
+游戏网络优选工具：为支持的游戏挑选更快的 CDN / API 线路，并可写入 hosts、优化系统网络参数、提升游戏进程调度优先级。
 
-A Windows game network optimisation tool. It automatically detects the **online games installed** on your PC, benchmarks the CDN / API routes of the game you select, and — once you confirm — writes the fastest endpoints into your `hosts` file. It also ships a one-click, **game-agnostic** system network tune-up.
+## 功能
 
-Everything runs locally. There is no cloud service, no account, no third-party proxy node, and no traffic relaying.
+- **游戏检测**：从 Steam 库、Epic 清单和运行中的进程识别已安装游戏，支持手动重新扫描。
+- **线路优选**：Cloudflare 下载线路使用「精选地址 + 学习库 + 地址池 → TCP 预筛 → 下载决赛 → 逐域名 HTTPS 验证」的流水线；API 线路按同样规则验证。最优结果可写入 hosts。
+- **写入与还原**：hosts 写入带标记块、自动备份、原子替换、写后读回校验；一键还原，必要时通过 UAC 提权。
+- **游戏加速**：提升游戏进程调度优先级，并按需为该进程建立 DSCP 46 的 QoS 策略。
+- **系统调优**：调整 TCP 自动调优级别与 RSS，写入前保存快照，可一键回滚；支持网卡节能相关设置。
+- **恢复机制**：登录计划任务在下次登录时按记录恢复 hosts / QoS / 调优。
+- **界面**：WebView2 承载的本地 HTML 界面（白底浅色，单窗口），中文界面。
 
-## Features
+## 技术栈
 
-**What it can do**: accelerate **domain-based services** — login, updates, lobby, friends, achievements, store, official sites, asset CDNs.
+- C# / .NET 10（WPF 宿主，`net10.0-windows`）
+- Microsoft WebView2（官方 SDK）
+- HTML / CSS / JavaScript（`src/web`，无前端构建步骤）
+- PowerShell（通过 `-EncodedCommand` 执行 netsh / QoS 等系统命令）
 
-**What it cannot do**:
-- **In-game latency** — match traffic is UDP straight to the game server (or P2P straight to another player) and **never touches a domain**, so `hosts` has nothing to work with. For those games the app shows an amber notice explaining this.
-- **In-game downloads** (maps / mods / save syncing) — Steam asks its Connection Manager for a **list of content-server IPs** and then connects to those IPs directly, and P2P transfers involve no domain at all. To speed up Steam downloads use the official setting instead: **Steam → Settings → Downloads → Download Region**, which beats any `hosts` optimisation.
+## 环境要求
 
-### 加速游戏 (local QoS)
+- Windows 10 / 11 x64
+- .NET 10 Desktop Runtime（开发需 .NET 10 SDK）
+- WebView2 Runtime（Windows 11 自带）
+- 修改 hosts、QoS、系统调优需要管理员权限；程序会在需要时弹出 UAC
 
-This is the only mechanism that improves **match latency** (especially useful for titles like Hunt: Showdown, whose servers are assigned dynamically).
-
-- Creates a Windows QoS rule (`DSCP 46`, all network profiles) for the selected game's executable, matching **only that one exe** — nothing else is affected.
-- **It works on every Windows edition.** Home editions have no Group Policy, so `-PolicyStore Local` always fails with "The network path was not found" (System Error 53). The app tries `Local` first (survives reboots) and **automatically falls back to `ActiveStore`**, then registers a **logon scheduled task** that re-creates the rule after every restart — Home users never have to click again. Removing the last boost removes the task.
-- Button state lives in `%LOCALAPPDATA%\BatterBabel\boosted.json` (reading the QoS store directly needs administrator rights, which a plain scan does not have). The record also stores the **policy store** and the **boot time**, so a rule that no longer survives after a restart is correctly reported as inactive.
-
-### Game detection
-
-- Steam stores each app's **category flags** locally in `appcache/appinfo.vdf`, and the keys are named `category_<id>` using Steam's own ids (`1` multi-player, `9` co-op, `20` MMO, `27` cross-platform multi-player, `36` online PvP, `38` online co-op). The app parses that binary KeyValues file directly — 16-byte header (magic `0x07564428`/`0x07564429`, universe, string-table offset) → repeating `[appid][size][binary KV]` entries → trailing string table that the keys reference **by index** — so online-ness is decided **entirely offline**, with no store API (which many networks cannot reach at all).
-- Every Steam library is scanned (`libraryfolders.vdf` + registry, parsing each `appmanifest_*.acf`); standalone clients are found through the uninstall registry and common install roots (`STOVE`, `Neowiz`, …). Library paths are de-duplicated case-insensitively (`d:\steam` and `D:\steam` are the same library), and Steam's redistributables (appid 228980) are skipped.
-
-### Platform targets: every detected game is optimisable
-
-Most games only talk to the same handful of platform services, so endpoints are defined **per platform** (`$PlatformTargets`: Ubisoft, Epic, Blizzard, EA) and every detected game inherits its platform's endpoints automatically. Rainbow Six Siege uses Ubisoft Connect's endpoints.
-
-**Steam's own endpoints are not ranked** (`api/login.steampowered.com`, the Steam CDN). Almost everyone already runs a Steam accelerator, and the real control for Steam download speed is **Settings → Downloads → Download Region**, so ranking them adds nothing. Titles whose only endpoints would have been Steam's (CS2, Hunt: Showdown, …) therefore show **no routes** — use the **加速游戏** QoS boost for those instead.
-
-A separate `$Catalog` entry is only needed when a game has **its own** domains worth ranking. `$OnlineGameIds` (~83 well-known online games) is only a fallback for what the local metadata does not cover.
-
-Game ids are validated by format only, and **the single place a game is defined is `$Catalog`** in `optimization.ps1` — adding one never requires touching the Rust layer, and there is no `ValidateSet` to keep in sync.
-
-### Route selection
-
-- **Cloudflare** — samples **2000 addresses** evenly across every official IPv4 range, screens them with concurrent TCP:443 handshakes (~10 s for the whole pool), then runs **real download tests** (`curl --resolve`, TLS chain still verified) on the 10 curated addresses, any previously-learned fast addresses, and the 20 lowest-latency discoveries (30 in total), ranking them by measured throughput.
-  - **Self-learning** — every run records its fastest downloaders to `%LOCALAPPDATA%\BatterBabel\cf-good-ips.json`. An address that reaches the top few **twice** earns a permanent free pass into the download stage, skipping the latency screen (which does not predict throughput). The library is capped at 30 entries.
-  - **Stale-address handling** — every tested address has its health refreshed: a win clears the failure count, a failure increments it, and **two consecutive failures evict the entry**. Curated addresses are *demoted* rather than deleted, avoiding the "delete → free pass next round → fail again" loop. Addresses that never win are not kept at all, so exploration noise cannot crowd out the real winners.
-- **CloudFront / generic CDN** — collects candidate IPs from the system resolver **plus** AliDNS and DNSPod DoH, probes each candidate per domain (real TLS SNI, certificate and Host preserved), and keeps the lowest median latency.
-- **Writing hosts** — results go into per-provider blocks (`CF`, `AMAZON`, `STEAM`, `EA`, `KLEI`, `UBISOFT`, `EPIC`, `BLIZZARD`), are backed up to `hosts.batterbabel.bak`, and can be removed with one click. Anything outside the marked blocks is never touched. The `CF` block additionally **rejects any address that is not an official Cloudflare range**.
-
-### System tuning (game-agnostic, one click)
-
-Generic latency fixes that benefit any online game:
-
-- **TCP low latency** — Nagle / delayed-ACK disabled per interface (`TcpAckFrequency`=1, `TCPNoDelay`=1, `TcpDelAckTicks`=0), so small packets leave immediately
-- **TCP globals** — `autotuninglevel=normal`, heuristics disabled, RSS enabled
-- **Adapter low-latency properties** — interrupt moderation, energy-efficient Ethernet, flow control and device power saving turned off
-- **Windows network throttling** — `NetworkThrottlingIndex` disabled, `SystemResponsiveness`=10
-- **Wi-Fi power** — adapter set to maximum performance
-- **Background bandwidth check** — lists bandwidth hogs (Baidu Netdisk, Thunder, video and torrent clients…)
-
-**Restore system tuning** — before the first change the originals are snapshotted to `%LOCALAPPDATA%\BatterBabel\tune-state.json`; one click restores everything.
-
-## Download
-
-A pre-built installer is published on the [Releases](../../releases) page:
-
-- `Batter Babel_<version>_x64-setup.exe` — NSIS installer (desktop + start-menu shortcuts), ~1.1 MB.
-
-> Requires the **WebView2 Runtime** (preinstalled on Windows 11 and on up-to-date Windows 10).
-
-## Usage
-Only **写入 hosts**, **还原 hosts**, **加速游戏 / 取消游戏加速**, **系统调优** and **还原系统调优** request administrator rights. Refusing never changes any of your network settings.
-
-## Build from source
-
-Requires [Rust](https://rustup.rs) (stable, MSVC toolchain) and the WebView2 Runtime.
+## 构建与运行
 
 ```powershell
-# install the Tauri CLI
-cargo install tauri-cli --version "^2"
+# 还原 + 构建（首次需要访问 nuget.org）
+dotnet build wpf/BatterBabel.sln -c Release
 
-# build the installer into src-tauri/target/release/bundle/
-cargo tauri build
+# 运行
+wpf/src/BatterBabel.App/bin/Release/net10.0-windows/BatterBabel.exe
 ```
 
-Icons are generated by `build/make_tauri_icons.py` (Python + Pillow) if you need to regenerate them.
+发布为便携目录：
 
-## How it works
+```powershell
+dotnet publish wpf/src/BatterBabel.App/BatterBabel.App.csproj -c Release -r win-x64 --self-contained false -o dist/BatterBabel-win-x64
+```
 
-- A small [Tauri](https://tauri.app) shell (`src-tauri/`, Rust) hosts the static UI (`src/public/`) in the system WebView2 and exposes two commands to the frontend.
-- `run_action` is **async + `spawn_blocking`**: PowerShell (and a UAC prompt) can block for a minute, so it must never run on the UI thread.
-- The Rust backend shells out to a PowerShell backend (`scripts/optimization.ps1`) for game scanning, route probing, Cloudflare/CloudFront optimisation, hosts writing and the system tune-up.
-- **Live progress runs on two independent paths**: PowerShell appends `percent|message` to the file passed as `-ProgressFile`; a Rust poller mirrors each change into a `bb-progress` event **and** into a global that `get_progress` returns. The UI reads the polled value (every 250 ms via `invoke('get_progress')` while an action runs) and treats the event as a low-latency bonus — if `window.__TAURI__.event` were ever unavailable, `listen` would fail silently and the bar would be left showing only its own timer.
-- Cloudflare download tests use the system `curl.exe` with `--ssl-no-revoke --resolve`: the TLS chain and hostname are still verified, only revocation checking is skipped.
-- Adding a game touches **one place**: `$Catalog` in `optimization.ps1`. Everything else is detected automatically from Steam's local metadata.
+自检：
 
-## Safety
+```powershell
+# 页面 ↔ 宿主通信与业务渲染（WebView2，无系统写入）
+dist/BatterBabel-win-x64/BatterBabel.exe --web-check
 
-- Only **official Cloudflare public IP ranges** (from `https://www.cloudflare.com/ips-v4`) are ever tested or written. `cf-apply` **hard-rejects** any non-Cloudflare address before it reaches the `CF` block, and reports how many entries were refused.
-- Hosts writes are wrapped in `# ==== Batter Babel <TAG> START/END` blocks (TAG = `CF`, `AMAZON`, `STEAM`, `EA`, `KLEI`, `UBISOFT`, `EPIC`, `BLIZZARD`), backed up to `hosts.batterbabel.bak`, and removable with **还原 hosts**.
-- **No DNS takeover, no proxy is created, and the routing table is never modified.**
-- Writing hosts only helps domains that actually use that CDN. Pointing a domain at the wrong provider's IP will make it unreachable — restore with **还原 hosts**.
-- The system tune-up only touches TCP / Nagle timers, adapter power & low-latency properties, the multimedia network throttling index, and the Wi-Fi power mode. Original values are written to the log before they are changed.
-- The QoS boost matches **only the selected game's executable path**; it never throttles or deprioritises anything else.
+# 核心库单元自检
+dotnet run --project wpf/tools/BatterBabel.SelfCheck -c Release
+```
 
-## Disclaimer
+界面资源在 `src/web`，构建时会复制到输出目录的 `assets/`，因此发布目录可以脱离仓库独立运行。
 
-This tool is for personal, legitimate use on networks you are authorised to manage. Using `hosts` entries, QoS rules or system network settings may violate the terms of some networks or services. How you use it is your own responsibility.
+## 项目结构
 
-## License
+```
+wpf/
+  BatterBabel.sln
+  src/BatterBabel.App/      WPF + WebView2 宿主、RPC 桥、真实测速与系统操作
+  src/BatterBabel.Core/     业务核心：发现、探测、hosts、QoS、调优、恢复
+  tools/BatterBabel.*/      各子系统自检程序
+src/web/                    界面（index.html / app.js / app.css / 字体 / 图标）
+assets/icons/               应用图标（SVG / PNG / ICO）
+tests/                      前端契约测试（node --test）
+```
 
-[MIT](LICENSE)
+## 已知限制
 
-##Any question?
-mail:deacon_2025@foxmail.com
+- 线路质量受本地网络与运营商影响，优选结果只代表测量时刻。
+- Windows 的 QoS 策略默认写入活动存储，重启后需要重新应用；登录恢复任务会处理这一点。
+- 部分 Windows 版本的 QoS 驱动会丢弃 `IPDstPrefixMatchCondition`，此时 IP 级 QoS 会以失败关闭（fail-closed），不影响 hosts 优选。

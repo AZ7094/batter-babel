@@ -1,0 +1,712 @@
+/* Batter Babel · 定稿白底界面
+ *
+ * 视觉依据：用户 2026-10-19 确认的主界面参考图。
+ * 结构固定：标题行 → 操作区 → 进度行 → 三行说明 → 两张结果卡 → hosts 行 → 日志框。
+ * 只做克制动效：进度宽度 160ms ease-out、按钮按下 scale(.98)、卡片结果淡入 120ms。
+ */
+
+:root {
+  --bg: #f6f6f2;
+  --panel: #ffffff;
+  --line: #e4e4dd;
+  --line-soft: #ecece6;
+  --text: #12161a;
+  --text-2: #4b504c;
+  --text-3: #71766f;
+  --green: #3fe3a6;
+  --green-ink: #07130e;
+  --blue: #2f7dd1;
+  --blue-bg: #ecf5fe;
+  --blue-line: #d3e5f8;
+  --orange: #d97a1e;
+  --orange-bg: #fff4e8;
+  --orange-line: #f4ddc6;
+  --red: #d64045;
+  --radius: 12px;
+  --font: "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.app {
+  max-width: 1180px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 22px 28px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 标题行 ───────────────────────────────────────────── */
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--green);
+  color: #0b0f10;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.mark img { display: block; width: 100%; height: 100%; border-radius: 10px; }
+
+.brand h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+}
+
+.rule {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+  margin: 0 2px;
+}
+
+.brand .sub {
+  margin: 1px 0 0;
+  font-size: 15.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #5f645b;
+  white-space: nowrap;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-3);
+  text-align: right;
+  text-wrap: balance;
+}
+
+/* ── 操作区 ───────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 2px;
+}
+
+.field-label {
+  font-size: 14.5px;
+  color: var(--text-2);
+}
+
+.select-wrap {
+  position: relative;
+  display: block;
+}
+
+.select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.6px solid #6a706a;
+  border-bottom: 1.6px solid #6a706a;
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+select {
+  appearance: none;
+  min-width: 214px;
+  height: 44px;
+  padding: 0 36px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: 500 15px/1 var(--font);
+  cursor: pointer;
+}
+
+/* 焦点环统一：2px 绿色半透明，键盘操作才出现。 */
+.btn:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid rgba(63, 224, 168, 0.55);
+  outline-offset: 2px;
+}
+
+select:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn {
+  height: 44px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: #1c2126;
+  font: 500 14.5px/1 var(--font);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    transform 120ms cubic-bezier(.23, 1, .32, 1);
+
+  font-weight: 500;}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+/* hover 只对真正有指针悬停能力的设备生效，触屏点击后不会「粘住」浅色背景。 */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { background: #fafaf6; border-color: #d8d8d1; }
+  .btn-primary:hover:not(:disabled) { background: #35d69b; border-color: #35d69b; }
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(.23, 1, .32, 1);
+}
+
+/* 禁用态：整按钮 45% 透明度 + 禁止光标，不再单独把文字洗成灰白。 */
+.btn:disabled {
+  opacity: 0.45;
+  color: #4b504c;
+  background: #f1f1ec;
+  border-color: #e2e2db;
+  cursor: not-allowed;
+}
+
+.btn:disabled svg { opacity: 0.9; }
+
+.btn-primary {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--green-ink);
+  font-weight: 500;
+}
+
+.btn-quiet {
+  height: 38px;
+  padding: 0 14px;
+  font-size: 13.5px;
+}
+
+.btn-quiet svg { width: 16px; height: 16px; }
+
+.toolbar-tail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ── 进度行 ───────────────────────────────────────────── */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 2px;
+}
+
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 9px;
+  border-radius: 99px;
+  background: #e7e7e0;
+  overflow: hidden;
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  border-radius: 99px;
+  background: var(--green);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 280ms cubic-bezier(.23, 1, .32, 1);
+  will-change: transform;
+}
+
+/* 测速中：只在进度未满时给轨道一点非常轻的扫光，说明「还在动」，不喧宾夺主。 */
+.track.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, .55) 45%, transparent 90%);
+  transform: translateX(-100%);
+  animation: sweep 1.6s cubic-bezier(.77, 0, .175, 1) infinite;
+}
+
+.pct {
+  flex: none;
+  font-size: 14px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 96px;
+
+  font-weight: 500;
+}
+
+/* ── 说明区 ───────────────────────────────────────────── */
+.notes { display: grid; gap: 2px; }
+
+.notes p {
+  margin: 0;
+  font-size: 14px;
+  color: #454a46;
+}
+
+.notes .warn { color: var(--red); }
+.notes .warn b { font-weight: 600; }
+
+.inline-note {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #f0cdcd;
+  border-radius: 10px;
+  background: #fff5f5;
+  color: #a5343a;
+  font-size: 13.5px;
+}
+
+/* ── 结果卡片 ─────────────────────────────────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: 1.06fr 1fr;
+  gap: 16px;
+  margin-top: 2px;
+}
+
+.card {
+  position: relative;
+  overflow: hidden;
+  padding: 20px 24px 18px;
+  border: 1px solid var(--blue-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #eef7ff 0%, var(--blue-bg) 100%);
+  min-height: 208px;
+}
+
+.card[data-kind="probe"] {
+  border-color: var(--orange-line);
+  background: linear-gradient(180deg, #fff7ee 0%, var(--orange-bg) 100%);
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  right: -44px;
+  top: -52px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(47, 125, 209, 0.075) 0 52%, rgba(47, 125, 209, 0) 53%),
+    radial-gradient(circle at 50% 50%, rgba(47, 125, 209, 0.045) 0 66%, rgba(47, 125, 209, 0) 67%);
+  pointer-events: none;
+}
+
+.card[data-kind="probe"]::after {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(217, 122, 30, 0.085) 0 52%, rgba(217, 122, 30, 0) 53%),
+    radial-gradient(circle at 50% 50%, rgba(217, 122, 30, 0.05) 0 66%, rgba(217, 122, 30, 0) 67%);
+}
+
+.card > * { position: relative; z-index: 1; }
+
+.card-title {
+  margin: 0 0 12px;
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.card-domains {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.link-badge {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(47, 125, 209, 0.10);
+  color: var(--blue);
+}
+
+.card[data-kind="probe"] .link-badge {
+  background: rgba(217, 122, 30, 0.12);
+  color: var(--orange);
+}
+
+.link-badge svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.domain-list {
+  display: grid;
+  gap: 1px;
+  font-size: 14px;
+  color: #4d534f;
+  overflow-wrap: anywhere;
+
+  font-weight: 500;
+}
+
+.lines {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+/* probe 组：域名 → 结果；域名可截断，结果（IP / 失败原因）不换色铺底。 */
+.line-probe .line-domain {
+  font-size: 13px;
+  color: #4d554e;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  font-weight: 500;
+}
+
+.line-arrow {
+  font-size: 13px;
+  color: #a8ada3;
+}
+
+.line-bad .line-meta { color: #8a857c; white-space: nowrap; font-weight: 500; }
+
+.card-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #8a857c;
+}
+
+.line-ip {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+}
+
+.card[data-kind="probe"] .line-ip { color: var(--orange); }
+
+.line-meta {
+  font-size: 13.5px;
+  color: #5d635f;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.card-empty {
+  margin: 6px 0 0;
+  font-size: 15px;
+  color: #7c827d;
+}
+
+.card-empty.pending { letter-spacing: 0.1em; }
+
+/* 测速中：只放 3 条错相位骨架条，不显示任何 IP / 速率（不伪造结果）。 */
+.skeleton {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 2px;
+}
+
+.skeleton span {
+  height: 11px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, rgba(47, 125, 209, 0.08) 0%, rgba(47, 125, 209, 0.22) 45%, rgba(47, 125, 209, 0.08) 90%);
+  background-size: 320% 100%;
+  background-position: 100% 0;
+  animation: skel 1.5s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+
+.skeleton span:nth-child(1) { width: 62%; }
+.skeleton span:nth-child(2) { width: 83%; animation-delay: 0.17s; }
+.skeleton span:nth-child(3) { width: 47%; animation-delay: 0.34s; }
+
+.card[data-kind="probe"] .skeleton span {
+  background: linear-gradient(90deg, rgba(217, 122, 30, 0.09) 0%, rgba(217, 122, 30, 0.24) 45%, rgba(217, 122, 30, 0.09) 90%);
+  background-size: 320% 100%;
+  background-position: 100% 0;
+}
+
+/* 卡片右上角小状态点：只在测速中出现，是「还在跑」的提示，不是结果。 */
+.card > .card-status {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2fbf88;
+  box-shadow: 0 0 0 0 rgba(63, 227, 166, 0.5);
+  animation: status-pulse 1.7s ease-out infinite;
+}
+
+.card > .card-status[data-state="failed"] {
+  background: #c8656a;
+  animation: none;
+  box-shadow: none;
+}
+
+/* 结果行落位：只在内容真的变了时播一次（.is-fresh 由 app.js 判断）。 */
+.card .lines.is-fresh {
+  animation: rise 200ms cubic-bezier(.23, 1, .32, 1) both;
+}
+
+@keyframes skel {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes status-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(63, 227, 166, 0.45); }
+  70% { box-shadow: 0 0 0 6px rgba(63, 227, 166, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 227, 166, 0); }
+}
+
+/* 旧版逐行动画已改由容器统一播放，这里保留空规则位置说明，不再使用。 */
+
+/* ── hosts / 日志 ─────────────────────────────────────── */
+.hosts {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: #5f645f;
+}
+
+.hosts span { font-family: var(--mono); font-size: 12.5px; }
+
+.logbox {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.logbox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.logbox-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333833;
+}
+
+.log-meta { font-size: 12.5px; color: #94998f; font-variant-numeric: tabular-nums; }
+
+.log {
+  margin: 0;
+  padding: 6px 16px 10px;
+  list-style: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  flex: 1 1 auto;
+  min-height: 96px;
+}
+
+.log li {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13.8px;
+  line-height: 1.55;
+  color: #3b403b;
+  animation: fade-in 140ms ease-out both;
+}
+
+.log .t { color: #9aa096; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log .m { overflow-wrap: anywhere; }
+.log li[data-tone="ok"] .m { color: #1f7a55; }
+.log li[data-tone="warn"] .m { color: #9a6a12; }
+.log li[data-tone="fail"] .m { color: #b03a3f; }
+
+/* 宽屏且窗口够高时整页锁在视口内：长日志改为面板内部滚动，结果态也不出现页面滚动条。 */
+@media (min-width: 1001px) and (min-height: 780px) {
+  .app { height: 100vh; overflow-x: hidden; overflow-y: auto; }
+}
+
+/* 窄屏（760–900 落在这一段）：单列 + 三列按钮网格（6 个元素正好两行，不留孤行）。 */
+@media (max-width: 1180px) and (min-width: 1001px) {
+  /* 8 个入口在 1100 左右的真实窗口里会挤到第二行；只收紧这一档的间距，不改小屏布局。 */
+  .toolbar { gap: 8px; }
+  .btn { padding: 0 12px; gap: 6px; }
+}
+
+@media (max-width: 1000px) {
+  .app { padding: 14px 16px 16px; gap: 10px; }
+  .top { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .hint { text-align: left; font-size: 13px; }
+  .mark { width: 34px; height: 34px; }
+  .brand h1 { font-size: 24px; }
+  .brand .sub { font-size: 14px; }
+  .toolbar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .field { grid-column: 1 / -1; flex: 1 1 100%; }
+  .select-wrap { flex: 1 1 auto; height: 34px; }
+  select { width: 100%; height: 34px; }
+  .toolbar .btn { width: 100%; justify-content: center; padding: 0 8px; height: 34px; font-size: 13px; }
+  .toolbar-tail .btn { width: auto; }
+  /* 保持两张卡并排：日志区才不会被挤到首屏之外。 */
+  .cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .card { min-height: 138px; padding: 14px 16px 12px; border-radius: 12px; }
+  .card::after { display: none; }
+  .card-title { font-size: 16.5px; }
+  .domain-list { font-size: 12.5px; }
+  .line-ip { font-size: 15px; }
+  .line-meta { font-size: 12.5px; }
+  .notes p { font-size: 12.8px; line-height: 1.5; }
+  .logbox-head { padding: 7px 12px; }
+  .logbox-head h2 { font-size: 13px; }
+  .log { padding: 4px 12px 8px; min-height: 84px; }
+  .log li { grid-template-columns: 64px 1fr; gap: 8px; font-size: 12.8px; }
+  /* 进度行换行后：轨道独占一行，状态文字与右侧按钮同起于轨道左缘。 */
+  .progress-row { flex-wrap: wrap; column-gap: 12px; row-gap: 8px; }
+  .track { flex: 1 1 100%; order: 1; }
+  .pct { order: 2; min-width: 0; }
+  .toolbar-tail { order: 3; margin-left: auto; }
+}
+
+@media (max-height: 720px) {
+  .app { padding: 10px 14px 12px; gap: 8px; }
+  .card { min-height: 118px; padding: 12px 14px 10px; }
+  .notes p { font-size: 12.2px; line-height: 1.45; }
+  .log { min-height: 72px; }
+  .logbox-head { padding: 5px 12px; }
+}
+
+/* —— 细节：数字对齐、结果落位、焦点环 —— */
+.card .lines strong,
+.card .result,
+.pct,
+.log li .t,
+.line-ip,
+.line-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes sweep {
+  to { transform: translateX(100%); }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 动效降级：骨架、心跳点、扫光、落位、日志渐入全部停掉，信息本身不变。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+  .skeleton span,
+  .card > .card-status,
+  .track.busy::after,
+  .card .lines.is-fresh,
+  .log li { animation: none !important; }
+  .skeleton span { background-position: 50% 0; opacity: .8; }
+}
+
+
+/* 已加速状态：浅绿底 + 深绿字，和「加速游戏」的中性按钮明显区分。 */
+.btn.is-on {
+  background: #E4F8EE;
+  border-color: #A9DFC6;
+  color: #126B4C;
+}
+.btn.is-on:hover { background: #D8F4E6; border-color: #8FD3B6; }
+.btn.is-on .icon { color: #0E7A55; }
+.btn.is-on:disabled { background: #E4F8EE; border-color: #A9DFC6; color: #126B4C; }

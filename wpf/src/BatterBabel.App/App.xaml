@@ -1,0 +1,14 @@
+<Application x:Class="BatterBabel.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 启动窗口由 App.OnStartup 决定：默认 WebView2 壳（复用 Tauri 版 HTML），加 native 参数走原生原型。
+         这里不用 StartupUri，否则会两个窗口。 -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Tokens.xaml 由 Controls.xaml 合并进来；应用级只挂这一层。 -->
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
