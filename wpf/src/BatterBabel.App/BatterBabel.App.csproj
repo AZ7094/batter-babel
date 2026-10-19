@@ -3,8 +3,8 @@
   <!--
     WPF 原型主程序（WinExe）。
     * 目标框架 net10.0-windows：.NET 10 是 LTS（EOL 2028-11-14），WPF 只有 Windows 目标可用。
-    * 依赖只有官方 Microsoft.Web.WebView2 SDK；UI 复用 src/web 下的 HTML/CSS/JS。
-    * ApplicationManifest：PerMonitorV2 DPI + asInvoker（只有写入 hosts 时才通过 runas 提权）。
+    * 无 PackageReference：原型只用 BCL + WPF，restore 不访问网络（配合 ../NuGet.config 的 <clear/>）。
+    * ApplicationManifest：PerMonitorV2 DPI + asInvoker（不请求管理员；原型不碰 hosts）。
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -14,6 +14,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>BatterBabel</AssemblyName>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>Batter Babel</Product>
+    <Company>Batter Babel</Company>
     <RootNamespace>BatterBabel.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../../assets/icons/batter-babel.ico</ApplicationIcon>
@@ -22,7 +27,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BatterBabel.Core\BatterBabel.Core.csproj" />
-    <!-- WebView2 是官方 SDK（非自研）：复用已发布版的 HTML 界面，宿主只做通道与命令适配。 -->
+    <!-- WebView2 是官方 SDK（非自研）：复用已发布版的 HTML 界面，宿主只做通道与命令适配。
+         包从 wpf/NuGet.config 的本地 feed 还原，restore 不访问公网。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>
 

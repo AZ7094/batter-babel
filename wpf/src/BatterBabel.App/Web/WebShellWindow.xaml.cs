@@ -56,7 +56,36 @@ public partial class WebShellWindow : Window
         catch (Exception ex)
         {
             Fail($"初始化异常：{ex.GetType().Name}: {ex.Message}");
-            if (_checkMode || _shotMode || _liveShot) { FinishChecks(); }
+            if (_checkMode || _shotMode || _liveShot)
+            {
+                FinishChecks();
+                return;
+            }
+
+            // 最常见的一类「下载了却打不开」：机器上没有 WebView2 运行时。
+            // 不弹通用异常框，直接告诉用户装什么，然后退出。
+            var missingRuntime = ex is WebView2RuntimeNotFoundException
+                || (ex.Message.Contains("WebView2", StringComparison.OrdinalIgnoreCase)
+                    && ex.Message.Contains("runtime", StringComparison.OrdinalIgnoreCase));
+            if (missingRuntime)
+            {
+                MessageBox.Show(
+                    "缺少 Microsoft Edge WebView2 运行时，界面无法启动。" + Environment.NewLine + Environment.NewLine
+                    + "请安装后重新打开 Batter Babel：" + Environment.NewLine
+                    + "https://go.microsoft.com/fwlink/p/?LinkId=2124703" + Environment.NewLine + Environment.NewLine
+                    + "Microsoft Edge WebView2 Runtime is required." + Environment.NewLine
+                    + "Install it from the link above, then start Batter Babel again.",
+                    "Batter Babel",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                Environment.Exit(3);
+            }
+
+            MessageBox.Show(
+                "Batter Babel 启动失败：" + ex.Message + Environment.NewLine + Environment.NewLine
+                + "Batter Babel failed to start: " + ex.Message,
+                "Batter Babel", MessageBoxButton.OK, MessageBoxImage.Error);
+            Environment.Exit(4);
         }
     }
 
