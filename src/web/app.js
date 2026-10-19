@@ -5,6 +5,10 @@
  *   2. 写动作原样发给宿主，宿主拒绝就如实显示（不假装成功）；
  *   3. 没有宿主时（浏览器直接打开）用带 FIXTURE 标记的模拟数据把状态跑通。
  *
+ * 文案：统一走 window.I18N（src/web/i18n.js，中文原文即 key）。没有 i18n.js 时退回
+ * 原样中文，保证单独加载 app.js 的测试与旧宿主行为不变。日志按「记录 + 惰性求值」存，
+ * 切换语言时整段重画，不会出现半句中文半句英文。
+ *
  * 桥：src/public/bridge.js 提供 window.__TAURI__.core.invoke / event.listen。
  */
 (function () {
@@ -24,12 +28,16 @@
   };
 
   var state = {
-    games: [], game: null, running: false, boostBusy: false,
-    groups: null, canApply: false, hostsPath: '', renderKey: ''
+    games: [], game: null, running: false, boostBusy: false, scanned: false,
+    groups: null, canApply: false, hostsPath: '', renderKey: '',
+    hint: { key: '正在检测游戏…', vars: null },
+    note: null,
+    progress: { percent: 0, key: '等待开始', vars: null }
   };
   var stickToBottom = true;
   var logIntent = false;
   var fixture = false;
+  var logRecords = [];
 
   // ?demo=running|failed 只给浏览器预览用（必须没有桌面宿主），且必须打 [FIXTURE] 标记，
   // 不能把模拟状态当成真实测速结果。真实宿主里这个参数会被忽略。
@@ -37,6 +45,58 @@
     var m = /[?&]demo=([a-z]+)/.exec(String(location.search || ''));
     return m ? m[1] : '';
   })();
+
+  /* ── 文案（i18n） ───────────────────────────────────── */
+
+  var I18N = window.I18N || null;
+
+  // 没有 i18n.js 时（例如单独加载 app.js 的测试）仍按中文原文渲染，只做占位符替换。
+  function format(text, vars) {
+    if (!vars) { return text; }
+    return String(text).replace(/\{(\w+)\}/g, function (whole, name) {
+      return Object.prototype.hasOwnProperty.call(vars, name) && vars[name] != null
+        ? String(vars[name])
+        : whole;
+    });
+  }
+
+  function T(key, vars) {
+    if (I18N && typeof I18N.t === 'function') { return I18N.t(key, vars); }
+    return format(key, vars);
+  }
+
+  // 宿主原文：渲染时才翻译（切换语言后日志整段重画也能跟着变）。
+  function H(raw) { return { __host: String(raw == null ? '' : raw) }; }
+
+  // 嵌套文案 key（例如失败原因有兜底 key 时），同样惰性求值。
+  function F(key, vars) { return { __key: key, vars: vars || null }; }
+
+  function resolveValue(value) {
+    if (value && typeof value === 'object') {
+      if (typeof value.__host === 'string') {
+        // 宿主原句在渲染时翻译；中文模式的「已写入」前缀也在这里补，
+        // 这样切换语言后旧日志能跟着重排，而宿主自检仍能看到「已写入」。
+        var hostText = localize(value.__host);
+        if (value.__prefixZh && !(I18N && I18N.lang === 'en') && hostText.indexOf(value.__prefixZh) !== 0) {
+          hostText = value.__prefixZh + hostText;
+        }
+        return hostText;
+      }
+      if (typeof value.__key === 'string') { return T(value.__key, resolveVars(value.vars)); }
+    }
+    return value;
+  }
+
+  function resolveVars(vars) {
+    if (!vars) { return vars; }
+    var out = {};
+    Object.keys(vars).forEach(function (name) { out[name] = resolveValue(vars[name]); });
+    return out;
+  }
+
+  function resolveText(key, vars) {
+    return T(resolveValue(key), resolveVars(vars));
+  }
 
   /* ── 小工具 ─────────────────────────────────────────── */
 
@@ -52,14 +112,34 @@
     return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
-  function log(text, tone) {
+  function rowHtml(record) {
+    return '<span class="t">[' + record.time + ']</span><span class="m">'
+      + esc(resolveText(record.key, record.vars)) + '</span>';
+  }
+
+  function syncLogMeta() {
+    els.logMeta.textContent = T('{n} 条', { n: logRecords.length });
+  }
+
+  function log(key, tone, vars) {
+    var record = { time: now(), key: key, vars: vars || null, tone: tone || '' };
+    logRecords.push(record);
     var li = document.createElement('li');
-    if (tone) { li.dataset.tone = tone; }
-    li.innerHTML = '<span class="t">[' + now() + ']</span><span class="m">' + esc(text) + '</span>';
+    if (record.tone) { li.dataset.tone = record.tone; }
+    li.innerHTML = rowHtml(record);
     // 用户只有在主动滚上去看历史时才脱离「跟底」；默认（含内容由短变长）一直跟。
     els.log.appendChild(li);
     if (stickToBottom) { els.log.scrollTop = els.log.scrollHeight; }
-    els.logMeta.textContent = els.log.children.length + ' 条';
+    syncLogMeta();
+  }
+
+  // 切换语言：按记录重画已写日志，不重新请求宿主、不丢结果。
+  function renderLog() {
+    var nodes = els.log.children || [];
+    for (var i = 0; i < logRecords.length && i < nodes.length; i++) {
+      nodes[i].innerHTML = rowHtml(logRecords[i]);
+    }
+    syncLogMeta();
   }
 
   // 只有用户的手势（滚轮/拖动滚动条/触摸）才算「主动翻历史」；程序滚到底不改变跟随状态。
@@ -73,27 +153,49 @@
     stickToBottom = els.log.scrollHeight - els.log.scrollTop - els.log.clientHeight < 16;
   });
 
-  function setProgress(percent, message) {
-    var value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  function renderProgress() {
+    var value = state.progress.percent;
     els.fill.style.transform = 'scaleX(' + (value / 100) + ')';
     els.track.setAttribute('aria-valuenow', String(value));
     // 扫光只在「真的还在跑」（0 < p < 100）时出现，停在 0% 或 100% 都收掉。
     var busy = value > 0 && value < 100;
     els.track.classList.toggle('busy', busy);
     els.track.setAttribute('aria-busy', busy ? 'true' : 'false');
-    els.pct.textContent = (message || '等待开始') + ' · ' + value + '%';
+    els.pct.textContent = resolveText(state.progress.key, state.progress.vars) + ' · ' + value + '%';
   }
 
-  function setHint(text) { els.hint.textContent = text; }
+  function setProgress(percent, key, vars) {
+    var value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    state.progress = { percent: value, key: key || '等待开始', vars: vars || null };
+    renderProgress();
+  }
 
-  function showNote(text) {
-    if (!text) { els.note.hidden = true; els.note.textContent = ''; return; }
+  function renderHint() { els.hint.textContent = resolveText(state.hint.key, state.hint.vars); }
+
+  function setHint(key, vars) {
+    state.hint = { key: key, vars: vars || null };
+    renderHint();
+  }
+
+  function renderNote() {
+    if (!state.note) { els.note.hidden = true; els.note.textContent = ''; return; }
     els.note.hidden = false;
-    els.note.textContent = text;
+    els.note.textContent = resolveText(state.note.key, state.note.vars);
+  }
+
+  function showNote(key, vars) {
+    state.note = key ? { key: key, vars: vars || null } : null;
+    renderNote();
   }
 
   function messageOf(data, fallback) {
     return (data && typeof data.message === 'string' && data.message) || fallback || '未提供原因';
+  }
+
+  // 失败原因：宿主的原文惰性翻译；没有 message 时用本地兜底 key。
+  function reasonOf(data, fallbackKey) {
+    var raw = data && typeof data.message === 'string' ? data.message : '';
+    return raw ? H(raw) : F(fallbackKey);
   }
 
   function failed(data) {
@@ -129,12 +231,12 @@
 
   function probeReason(reason) {
     var key = String(reason == null ? '' : reason).trim();
-    if (!key) { return '未知原因'; }
-    if (Object.prototype.hasOwnProperty.call(PROBE_REASONS, key)) { return PROBE_REASONS[key]; }
+    if (!key) { return T('未知原因'); }
+    if (Object.prototype.hasOwnProperty.call(PROBE_REASONS, key)) { return T(PROBE_REASONS[key]); }
     var http = /^HttpStatus(\d{3})$/.exec(key);
     if (http) { return 'HTTP ' + http[1]; }
     var curl = /^CurlExit(\d+)$/.exec(key);
-    if (curl) { return '连接错误（curl ' + curl[1] + '）'; }
+    if (curl) { return T('连接错误（curl {code}）', { code: curl[1] }); }
     return key;
   }
 
@@ -155,7 +257,7 @@
         + '<span class="line-meta">' + esc(meta) + '</span></div>';
     }
     return '<div class="line line-probe line-bad">' + domain
-      + '<span class="line-meta">无法使用（' + esc(probeReason(item.reason)) + '）</span></div>';
+      + '<span class="line-meta">' + esc(T('无法使用（{reason}）', { reason: probeReason(item.reason) })) + '</span></div>';
   }
 
   function cardHtml(kind, title, domains, bodyHtml, status) {
@@ -176,16 +278,16 @@
 
   // 测速中：3 条错相位骨架条，不写死任何 IP / 速率（结果只能来自宿主）。
   function skeletonBody() {
-    return '<div class="skeleton" role="status" aria-label="测速中"><span></span><span></span><span></span></div>';
+    return '<div class="skeleton" role="status" aria-label="' + esc(T('测速中')) + '"><span></span><span></span><span></span></div>';
   }
-
-  var NO_ROUTES_NOTE = '该游戏没有可优选的线路。';
 
   function renderPlaceholders() {
     if (!state.game || noRoutes(state.game)) {
       // 没有线路分组时仍保留两张占位卡（Cloudflare / CloudFront），只用一行中性说明，
       // 不显示「—」也不编造 IP：优选对它真的没有可测的东西。
-      var body = state.game ? '<p class="card-empty">' + NO_ROUTES_NOTE + '</p>' : placeholderBody();
+      var body = state.game
+        ? '<p class="card-empty">' + esc(T('该游戏没有可优选的线路。')) + '</p>'
+        : placeholderBody();
       els.cards.innerHTML = cardHtml('cloudflare', 'Cloudflare (download CDN)', [], body)
         + cardHtml('probe', 'CloudFront (API)', [], body);
       return;
@@ -218,7 +320,8 @@
     }
     if (!lines.length) {
       // 整组没有可用 IP：保留占位 —，行下给一条弱化说明，不伪造地址。
-      return '<p class="card-empty pending">—</p><p class="card-note">未测到可用线路</p>';
+      return '<p class="card-empty pending">—</p><p class="card-note">'
+        + esc(T('未测到可用线路')) + '</p>';
     }
     // is-fresh 只在内容真的变了时由 renderResult 打上，重复渲染同一份结果不会重播动画。
     return '<div class="lines' + (fresh ? ' is-fresh' : '') + '">' + lines.join('') + '</div>';
@@ -283,6 +386,22 @@
     return !game || game.support === false || !(game.optGroups && game.optGroups.length);
   }
 
+  // 语言切换后重画下拉：保留当前选中的游戏，只重写选项文案。
+  function renderGameOptions() {
+    var previous = state.game ? state.game.id : (els.game.value || '');
+    if (!state.games.length) {
+      els.game.innerHTML = '<option value="">'
+        + esc(T(state.scanned ? '没有检测到已安装的游戏' : '检测中…')) + '</option>';
+      return;
+    }
+    els.game.innerHTML = state.games.map(function (g) {
+      // 无线路分组只加后缀：选项本身照常可选，不做 disabled。
+      return '<option value="' + esc(g.id) + '">' + esc(g.name)
+        + (g.support === false ? esc(T('（无线路分组）')) : '') + '</option>';
+    }).join('');
+    if (previous) { els.game.value = previous; }
+  }
+
   async function scan(force) {
     els.detect.disabled = true;
     setHint('正在检测已安装的游戏…');
@@ -291,16 +410,22 @@
       if (failed(data)) { throw new Error(messageOf(data, '检测游戏失败')); }
       fixture = !!(data && data.fixture);
       state.games = selectable(data && data.games);
+      state.scanned = true;
       var all = (data && data.games) || [];
       var routed = state.games.filter(function (g) { return !noRoutes(g); }).length;
-      log('检测到 ' + state.games.length + ' 个已安装游戏，其中 ' + routed + ' 个有线路分组'
-        + (state.games.length > routed ? '（其余可加速游戏或写入游戏配置）' : ''));
+      if (state.games.length > routed) {
+        log('检测到 {total} 个已安装游戏，其中 {routed} 个有线路分组（其余可加速游戏或写入游戏配置）', '',
+          { total: state.games.length, routed: routed });
+      } else {
+        log('检测到 {total} 个已安装游戏，其中 {routed} 个有线路分组', '',
+          { total: state.games.length, routed: routed });
+      }
       if (state.games.length === 0) {
         state.game = null;
         renderPlaceholders();
         setHint('没有检测到已安装的游戏。请确认游戏已安装，再点「检测游戏」。');
         setProgress(0, '没有已安装的游戏');
-        els.game.innerHTML = '<option value="">没有检测到已安装的游戏</option>';
+        renderGameOptions();
         renderBoostButton();
         return;
       }
@@ -311,17 +436,13 @@
         return g && g.installed === true && !noRoutes(g);
       })[0] || state.games[0];
       var keep = state.games.some(function (g) { return g.id === previous; }) ? previous : fallback.id;
-      els.game.innerHTML = state.games.map(function (g) {
-        // 无线路分组只加后缀：选项本身照常可选，不做 disabled。
-        return '<option value="' + esc(g.id) + '">' + esc(g.name)
-          + (g.support === false ? '（无线路分组）' : '') + '</option>';
-      }).join('');
+      renderGameOptions();
       selectGame(keep);
       reportQos(data && data.qos);
     } catch (err) {
       var text = String((err && err.message) || err);
-      log('检测游戏失败：' + text, 'fail');
-      showNote('检测游戏失败：' + text);
+      log('检测游戏失败：{reason}', 'fail', { reason: text });
+      showNote('检测游戏失败：{reason}', { reason: text });
       setHint('检测游戏失败，可点「检测游戏」重试。');
       renderPlaceholders();
     } finally {
@@ -332,7 +453,9 @@
   function reportQos(qos) {
     if (!qos) { return; }
     if (qos.available === false) {
-      log('注意：' + (qos.reason || '本机未接入 QoS 能力探测') + '。「加速游戏」可能无法生效。', 'warn');
+      log('注意：{reason}。「加速游戏」可能无法生效。', 'warn', {
+        reason: qos.reason ? H(qos.reason) : F('本机未接入 QoS 能力探测')
+      });
     } else if (qos.persistent === false) {
       log('提示：本机 Windows 没有组策略 QoS 存储，加速规则将写入活动存储，重启后由计划任务自动恢复。', 'warn');
     }
@@ -343,19 +466,19 @@
   function renderBoostButton() {
     var game = state.game;
     var on = !!(game && game.accelerated === true);
-    if (els.boostLabel) { els.boostLabel.textContent = on ? '取消加速' : '加速游戏'; }
+    if (els.boostLabel) { els.boostLabel.textContent = T(on ? '取消加速' : '加速游戏'); }
     // 已加速时按钮换一套配色：只换文字的话「加速游戏」和「取消加速」长得一模一样。
     els.boost.classList.toggle('is-on', on);
     els.boost.disabled = !game || game.installed !== true || !game.executablePath
       || state.running || state.boostBusy;
     if (!game) {
-      els.boost.title = '请先选择一个游戏';
+      els.boost.title = T('请先选择一个游戏');
     } else if (!game.installed) {
-      els.boost.title = '该游戏未安装';
+      els.boost.title = T('该游戏未安装');
     } else if (!game.executablePath) {
-      els.boost.title = '未找到可执行文件，无法创建 QoS 加速规则';
+      els.boost.title = T('未找到可执行文件，无法创建 QoS 加速规则');
     } else {
-      els.boost.title = on ? '移除该游戏的加速规则' : '为该游戏创建 QoS (DSCP 46) 加速规则，需要管理员授权';
+      els.boost.title = T(on ? '移除该游戏的加速规则' : '为该游戏创建 QoS (DSCP 46) 加速规则，需要管理员授权');
     }
   }
 
@@ -375,9 +498,9 @@
     setProgress(0, '等待开始');
     if (noRoutes(state.game)) {
       // 仍可选、仍能「加速游戏」：状态行如实说明这条游戏能做什么。
-      setHint(state.game.name + ' 没有可优选的 CDN / API 线路，但可以加速游戏或写入游戏配置。');
+      setHint('{name} 没有可优选的 CDN / API 线路，但可以加速游戏或写入游戏配置。', { name: state.game.name });
     } else {
-      setHint('已选择 ' + state.game.name + '，点击「开始优选」测速其 CDN / API 线路。');
+      setHint('已选择 {name}，点击「开始优选」测速其 CDN / API 线路。', { name: state.game.name });
     }
     if (state.game.executablePath) {
       // 已知 exe 才有资格加速；缺失时按钮禁用，但原因写在 note 里，不只靠 title。
@@ -412,8 +535,8 @@
     setRunning(true);
     runningCards();
     setProgress(0, '准备测速');
-    setHint('正在测速 ' + state.game.name + '…');
-    log('开始优选：' + state.game.name + ' (start_job + run_action cf-optimize)');
+    setHint('正在测速 {name}…', { name: state.game.name });
+    log('开始优选：{name} (start_job + run_action cf-optimize)', '', { name: state.game.name });
 
     var started = Date.now();
     var jobId = '';
@@ -455,12 +578,12 @@
       var data = await invoke('run_action', { action: 'cf-optimize', gameId: state.game.id, jobId: jobId });
       var elapsed = ((Date.now() - started) / 1000).toFixed(1);
       if (failed(data)) {
-        var reason = messageOf(data, '优选没有完成');
+        var reason = reasonOf(data, '优选没有完成');
         renderPlaceholders();
         setProgress(0, '未完成');
-        setHint('优选未完成：' + reason);
-        showNote('优选未完成：' + reason);
-        log('优选未完成：' + reason, 'fail');
+        setHint('优选未完成：{reason}', { reason: reason });
+        showNote('优选未完成：{reason}', { reason: reason });
+        log('优选未完成：{reason}', 'fail', { reason: reason });
         return;
       }
       var groups = (data && data.groups) || [];
@@ -474,7 +597,7 @@
       } else {
         setHint('优选完成，可点击「写入 hosts」应用结果。');
       }
-      log('优选完成：' + groups.length + ' 组 · ' + elapsed + ' s', 'ok');
+      log('优选完成：{count} 组 · {seconds} s', 'ok', { count: groups.length, seconds: elapsed });
       if (data && data.hostsPath) {
         state.hostsPath = data.hostsPath;
         els.hosts.textContent = data.hostsPath;
@@ -484,8 +607,12 @@
       }
       if (data && Array.isArray(data.configs)) {
         data.configs.forEach(function (item) {
-          var where = item.path ? '：' + item.path : '';
-          log('游戏配置' + where + ' → ' + item.message, item.ok ? 'ok' : 'warn');
+          var message = H(item.message);
+          if (item.path) {
+            log('游戏配置：{path} → {message}', item.ok ? 'ok' : 'warn', { path: item.path, message: message });
+          } else {
+            log('游戏配置 → {message}', item.ok ? 'ok' : 'warn', { message: message });
+          }
         });
       }
       state.canApply = anyUsable(groups);
@@ -497,8 +624,8 @@
       renderPlaceholders();
       setProgress(0, '未完成');
       setHint('没有收到宿主答复，结果未知。');
-      showNote('没有收到宿主答复：' + text);
-      log('优选请求失败：' + text, 'fail');
+      showNote('没有收到宿主答复：{reason}', { reason: text });
+      log('优选请求失败：{reason}', 'fail', { reason: text });
     } finally {
       stopped = true;
       if (timer) { clearInterval(timer); }
@@ -523,11 +650,54 @@
     [/^(.+) is not running$/, function (m) { return m[1] + ' 未在运行'; }]
   ];
 
+  // 反向：中文宿主结果 → 英文。只列已知格式，认不出就原样显示。
+  var HOST_MESSAGES_EN = [
+    [/^已写入 (\d+) 条 hosts 映射（备份：(.+)）$/,
+      function (m) { return 'Wrote ' + m[1] + ' hosts mapping(s) (backup: ' + m[2] + ').'; }],
+    [/^已写入 (\d+) 条 hosts 映射$/,
+      function (m) { return 'Wrote ' + m[1] + ' hosts mapping(s).'; }],
+    [/^已还原，移除 (\d+) 行 hosts 记录$/,
+      function (m) { return 'Restored, removed ' + m[1] + ' host line(s).'; }],
+    // Windows 宿主实际返回的中文句式（wpf/src/BatterBabel.Core/Hosts/HostsFileWriter.cs）。
+    [/^已写入 (\d+) 条映射$/,
+      function (m) { return 'Wrote ' + m[1] + ' hosts mapping(s).'; }],
+    [/^已还原：移除 (\d+) 条映射$/,
+      function (m) { return 'Restored, removed ' + m[1] + ' host line(s).'; }],
+    [/^已移除空的标记块$/,
+      function () { return 'Removed an empty marker block.'; }],
+    [/^系统调优已还原。?$/,
+      function () { return 'System tuning restored.'; }],
+    [/^已更新托管块$/,
+      function () { return 'Updated the managed block.'; }],
+    [/^已写入托管块（原有内容保持不变）$/,
+      function () { return 'Wrote the managed block (existing content kept).'; }],
+    [/^已写入托管块（新建配置文件）$/,
+      function () { return 'Wrote the managed block (new config file).'; }],
+    [/^已提升 (\d+) 个 (.+?) 进程的调度优先级$/,
+      function (m) { return 'Raised scheduling priority for ' + m[1] + ' ' + m[2] + ' process(es).'; }],
+    [/^(.+) 未在运行$/, function (m) { return m[1] + ' is not running.'; }],
+    [/^没有可写入的有效映射（已拒绝 (\d+) 条）$/,
+      function (m) { return 'No valid mappings to write (' + m[1] + ' rejected).'; }],
+    [/^没有可写入的映射$/, function () { return 'No mappings to write.'; }],
+    [/^未知命令：(.+)$/, function (m) { return 'Unknown command: ' + m[1]; }],
+    [/^未知游戏：(.+)$/, function (m) { return 'Unknown game: ' + m[1]; }],
+    [/^这个游戏没有可优选的线路分组$/, function () { return 'This game has no route groups to optimize.'; }],
+    [/^没有可优选的线路；游戏配置已处理$/, function () { return 'No routes to optimize; the game config was handled.'; }]
+  ];
+
   function localize(message) {
     if (typeof message !== 'string' || !message) { return message; }
-    for (var i = 0; i < HOST_MESSAGES.length; i++) {
-      var found = HOST_MESSAGES[i][0].exec(message.trim());
-      if (found) { return HOST_MESSAGES[i][1](found); }
+    var english = I18N && I18N.lang === 'en';
+    // 我们自己的整句文案（如模拟宿主的固定消息）直接查词典，命中就换；
+    // 带变量的宿主句子走下面的已知格式表。
+    if (english) {
+      var direct = T(message);
+      if (direct !== message) { return direct; }
+    }
+    var table = english ? HOST_MESSAGES_EN : HOST_MESSAGES;
+    for (var i = 0; i < table.length; i++) {
+      var found = table[i][0].exec(message.trim());
+      if (found) { return table[i][1](found); }
     }
     return message;
   }
@@ -536,31 +706,31 @@
     var args = { action: action };
     if (extra) { Object.keys(extra).forEach(function (k) { args[k] = extra[k]; }); }
     if (button) { button.disabled = true; }
-    showNote('正在执行：' + action + '…');
+    showNote('正在执行：{action}…', { action: action });
     try {
       var data = await invoke('run_action', args);
       // 系统调优是「多项分别落地」：PARTIAL 不是拒绝，如实把哪几项没成写进日志。
       var partial = data && data.ok !== true && (data.status === 'PARTIAL' || data.status === 'NO_SNAPSHOT');
       if (failed(data) && !partial) {
-        var reason = localize(messageOf(data, '宿主拒绝了这次操作'));
-        showNote(reason);
-        log(action + ' 被拒绝：' + reason, 'warn');
+        var reason = reasonOf(data, '宿主拒绝了这次操作');
+        showNote('{reason}', { reason: reason });
+        log('{action} 被拒绝：{reason}', 'warn', { action: action, reason: reason });
         return;
       }
       if (partial) {
-        var partly = localize(messageOf(data, '部分完成'));
-        showNote(partly);
-        log(action + '：' + partly, 'warn');
+        var partly = reasonOf(data, '部分完成');
+        showNote('{message}', { message: partly });
+        log('{action}：{message}', 'warn', { action: action, message: partly });
         return;
       }
-      var message = localize(messageOf(data, '已完成'));
+      var message = reasonOf(data, '已完成');
       showNote('');
-      log(action + '：' + message, 'ok');
+      log('{action}：{message}', 'ok', { action: action, message: message });
       if (data && data.hostsPath) { els.hosts.textContent = data.hostsPath; }
     } catch (err) {
       var text = String((err && err.message) || err);
       showNote('没有收到宿主答复，结果未知。');
-      log(action + ' 请求失败：' + text, 'fail');
+      log('{action} 请求失败：{reason}', 'fail', { action: action, reason: text });
     } finally {
       if (button) { button.disabled = false; }
     }
@@ -574,9 +744,13 @@
     if (state.running || state.boostBusy) { return; }
     var turningOff = game.accelerated === true;
     state.boostBusy = true;
-    showNote((turningOff ? '正在取消 ' : '正在加速 ') + game.name + '…如弹出「用户账户控制」窗口，请点「是」。');
-    log((turningOff ? '取消加速：' : '加速游戏：') + game.name
-      + ' → run_action (action:"' + (turningOff ? 'restore' : 'optimize') + '")');
+    if (turningOff) {
+      showNote('正在取消 {name}…如弹出「用户账户控制」窗口，请点「是」。', { name: game.name });
+      log('取消加速：{name} → run_action (action:"restore")', '', { name: game.name });
+    } else {
+      showNote('正在加速 {name}…如弹出「用户账户控制」窗口，请点「是」。', { name: game.name });
+      log('加速游戏：{name} → run_action (action:"optimize")', '', { name: game.name });
+    }
     renderBoostButton();
     try {
       var data = await invoke('run_action', {
@@ -584,17 +758,19 @@
         gameId: game.id
       });
       if (failed(data)) {
-        var reason = localize(messageOf(data, '宿主拒绝了这次操作'));
-        showNote(reason);
-        log((turningOff ? 'restore' : 'optimize') + ' 被拒绝：' + reason, 'warn');
+        var reason = reasonOf(data, '宿主拒绝了这次操作');
+        showNote('{reason}', { reason: reason });
+        log('{action} 被拒绝：{reason}', 'warn', {
+          action: turningOff ? 'restore' : 'optimize', reason: reason
+        });
         return;
       }
       // 宿主明确回了 accelerated 就以后端为准，否则按本次切换方向更新。
       game.accelerated = typeof (data && data.accelerated) === 'boolean' ? data.accelerated : !turningOff;
       if (turningOff) {
-        log('restore：已取消 ' + game.name + ' 的加速', 'ok');
+        log('restore：已取消 {name} 的加速', 'ok', { name: game.name });
       } else {
-        log('optimize：已加速 ' + game.name, 'ok');
+        log('optimize：已加速 {name}', 'ok', { name: game.name });
       }
       if (!turningOff && data && data.persistent === false) {
         log('注意：本机 Windows 没有组策略 QoS 存储，规则只写入活动存储，重启后需要重新点一次「加速游戏」。', 'warn');
@@ -604,7 +780,9 @@
     } catch (err) {
       var text = String((err && err.message) || err);
       showNote('没有收到宿主答复，结果未知。');
-      log((turningOff ? 'restore' : 'optimize') + ' 请求失败：' + text, 'fail');
+      log('{action} 请求失败：{reason}', 'fail', {
+        action: turningOff ? 'restore' : 'optimize', reason: text
+      });
     } finally {
       state.boostBusy = false;
       renderBoostButton();
@@ -671,29 +849,50 @@
     if (state.game && state.game.id) { args.gameId = state.game.id; }
     els.apply.disabled = true;
     showNote('正在写入 hosts…如弹出「用户账户控制」窗口，请点「是」。');
-    log('写入 hosts：' + domains.length + ' 条映射 → run_action (action:"cf-apply")');
+    log('写入 hosts：{count} 条映射 → run_action (action:"cf-apply")', '', { count: domains.length });
     try {
       var data = await invoke('run_action', args);
       if (failed(data)) {
-        var reason = localize(messageOf(data, '宿主拒绝了这次操作'));
-        showNote(reason);
-        log('cf-apply 被拒绝：' + reason, 'warn');
+        var reason = reasonOf(data, '宿主拒绝了这次操作');
+        showNote('{reason}', { reason: reason });
+        log('cf-apply 被拒绝：{reason}', 'warn', { reason: reason });
         return;
       }
-      var message = localize(messageOf(data, '已完成'));
-      // 门禁与宿主自检都匹配「已写入」这个前缀；宿主 message 自己带前缀时不能念两遍。
-      var written = /^已写入/.test(message) ? message : '已写入 ' + message;
+      var rawMessage = data && typeof data.message === 'string' ? data.message : '';
+      // 宿主 message 带进日志时保留原文，渲染时再按当前语言翻译；中文的「已写入」
+      // 前缀由 resolveValue 补，宿主已经带了就不会重复（门禁与宿主自检匹配这个前缀）。
+      var written = rawMessage ? { __host: rawMessage, __prefixZh: '已写入' } : T('已完成');
       showNote('');
-      log('cf-apply：' + written, 'ok');
+      log('cf-apply：{message}', 'ok', { message: written });
       if (data && data.hostsPath) { els.hosts.textContent = data.hostsPath; }
     } catch (err) {
       var text = String((err && err.message) || err);
       showNote('没有收到宿主答复，结果未知。');
-      log('cf-apply 请求失败：' + text, 'fail');
+      log('cf-apply 请求失败：{reason}', 'fail', { reason: text });
     } finally {
       els.apply.disabled = !state.canApply;
     }
   }
+
+  /* ── 语言切换：只重画界面，不重发请求、不丢当前结果 ── */
+
+  function renderAll() {
+    renderGameOptions();
+    renderHint();
+    renderProgress();
+    renderNote();
+    renderBoostButton();
+    if (state.running && state.game) {
+      runningCards();
+    } else if (state.groups && state.groups.length) {
+      renderResult(state.groups);
+    } else {
+      renderPlaceholders();
+    }
+    renderLog();
+  }
+
+  if (I18N && typeof I18N.onChange === 'function') { I18N.onChange(renderAll); }
 
   /* ── 事件绑定 ───────────────────────────────────────── */
 
@@ -814,7 +1013,7 @@
 
   // 浏览器预览专用：等游戏列表就绪后自动点一次「开始优选」，把状态停在 running / failed / mixed。
   function startDemo() {
-    log('[FIXTURE] demo=' + demo + '：模拟状态，不是真实网络结果。', 'warn');
+    log('[FIXTURE] demo={demo}：模拟状态，不是真实网络结果。', 'warn', { demo: demo });
     var tries = 0;
     var timer = setInterval(function () {
       if (state.game && !state.running) { clearInterval(timer); optimize(); }
@@ -829,6 +1028,7 @@
   }
 
   renderPlaceholders();
+  setProgress(0, '等待开始');
   scan(false);
 
   if (demo) {

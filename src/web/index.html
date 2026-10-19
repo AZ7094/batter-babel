@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Batter Babel · 游戏网络优选</title>
+<title data-i18n="Batter Babel · 游戏网络优选">Batter Babel · 游戏网络优选</title>
 <link rel="icon" href="icon.png?v=3" />
 <link rel="stylesheet" href="fonts/fonts.css">
   <link rel="stylesheet" href="app.css">
@@ -16,42 +16,49 @@
       <span class="mark" aria-hidden="true"><img src="icon.png" alt="" width="40" height="40"></span>
       <h1>Batter Babel</h1>
       <span class="rule" aria-hidden="true"></span>
-      <p class="sub">游戏网络优选</p>
+      <p class="sub" data-i18n="游戏网络优选">游戏网络优选</p>
     </div>
-    <p class="hint" id="hint">正在检测游戏…</p>
+    <div class="top-right">
+      <p class="hint" id="hint" data-i18n="正在检测游戏…">正在检测游戏…</p>
+      <button type="button" class="lang-toggle" id="lang" data-i18n-aria="切换语言" aria-label="切换语言" aria-pressed="false">
+        <span class="lang-zh" aria-hidden="true">中文</span>
+        <span class="lang-sep" aria-hidden="true">/</span>
+        <span class="lang-en" aria-hidden="true">EN</span>
+      </button>
+    </div>
   </header>
 
-  <div class="toolbar" role="toolbar" aria-label="主要操作">
+  <div class="toolbar" role="toolbar" data-i18n-aria="主要操作" aria-label="主要操作">
     <label class="field">
-      <span class="field-label">游戏</span>
+      <span class="field-label" data-i18n="游戏">游戏</span>
       <span class="select-wrap">
-        <select id="game-select" aria-label="选择游戏"><option value="">检测中…</option></select>
+        <select id="game-select" data-i18n-aria="选择游戏" aria-label="选择游戏"><option value="" data-i18n="检测中…">检测中…</option></select>
       </span>
     </label>
 
     <button type="button" class="btn" id="btn-detect">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
-      检测游戏
+      <span data-i18n="检测游戏">检测游戏</span>
     </button>
 
     <button type="button" class="btn btn-primary" id="optimize">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/></svg>
-      开始优选
+      <span data-i18n="开始优选">开始优选</span>
     </button>
 
     <button type="button" class="btn" id="btn-apply" disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><path d="m7.5 9.5 4.5 5 4.5-5"/><path d="M4.5 19.5h15"/></svg>
-      写入 hosts
+      <span data-i18n="写入 hosts">写入 hosts</span>
     </button>
 
     <button type="button" class="btn" id="btn-restore">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10a8 8 0 1 1 2.2 6.4"/><path d="M4 4.5V10h5.5"/></svg>
-      还原 hosts
+      <span data-i18n="还原 hosts">还原 hosts</span>
     </button>
 
     <button type="button" class="btn" id="btn-boost" disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10a4 4 0 0 1 4 4v1a3 3 0 0 1-5.4 1.8L14 12.5H10l-1.6 2.3A3 3 0 0 1 3 13v-1a4 4 0 0 1 4-4Z"/><path d="M8 11.5h1.5"/></svg>
-      <span id="boost-label">加速游戏</span>
+      <span id="boost-label" data-i18n="加速游戏">加速游戏</span>
     </button>
 
   </div>
@@ -60,35 +67,35 @@
     <div class="track" id="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
       <span class="fill" id="fill"></span>
     </div>
-    <span class="pct" id="pct">等待开始 · 0%</span>
+    <span class="pct" id="pct" data-i18n="等待开始 · 0%">等待开始 · 0%</span>
     <div class="toolbar-tail">
       <button type="button" class="btn btn-quiet" id="btn-tune">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
-        系统调优
+        <span data-i18n="系统调优">系统调优</span>
       </button>
       <button type="button" class="btn btn-quiet" id="btn-restore-tune">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 10a7.5 7.5 0 1 1 2 5.9"/><path d="M4.5 4.8V10H9.7"/></svg>
-        还原系统调优
+        <span data-i18n="还原系统调优">还原系统调优</span>
       </button>
     </div>
   </div>
 
   <div class="notes">
-    <p>开始优选：测试所选游戏的 CDN / API 线路，测速过程不会修改 hosts。</p>
-    <p>写入 hosts：将优选结果应用到系统 hosts，需要同意管理员授权。</p>
-    <p class="warn"><b>还原 hosts：</b>如果应用后遇到问题，可移除 Batter Babel 写入的 hosts 标记块。</p>
+    <p data-i18n="开始优选：测试所选游戏的 CDN / API 线路，测速过程不会修改 hosts。">开始优选：测试所选游戏的 CDN / API 线路，测速过程不会修改 hosts。</p>
+    <p data-i18n="写入 hosts：将优选结果应用到系统 hosts，需要同意管理员授权。">写入 hosts：将优选结果应用到系统 hosts，需要同意管理员授权。</p>
+    <p class="warn"><b data-i18n="还原 hosts：">还原 hosts：</b><span data-i18n="如果应用后遇到问题，可移除 Batter Babel 写入的 hosts 标记块。">如果应用后遇到问题，可移除 Batter Babel 写入的 hosts 标记块。</span></p>
   </div>
 
   <p class="inline-note" id="inline-note" role="status" hidden></p>
 
-  <section class="cards" id="cards" aria-label="线路优选结果"></section>
+  <section class="cards" id="cards" data-i18n-aria="线路优选结果" aria-label="线路优选结果"></section>
 
   <p class="hosts">hosts: <span id="hosts-path">C:\Windows\System32\drivers\etc\hosts</span></p>
 
   <section class="logbox" aria-labelledby="log-title">
     <div class="logbox-head">
-      <h2 id="log-title">运行日志</h2>
-      <span class="log-meta" id="log-meta">0 条</span>
+      <h2 id="log-title" data-i18n="运行日志">运行日志</h2>
+      <span class="log-meta" id="log-meta" data-i18n="0 条">0 条</span>
     </div>
     <ol class="log" id="log" aria-live="polite" aria-relevant="additions"></ol>
   </section>
@@ -96,6 +103,7 @@
 </div>
 
 <script src="bridge.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

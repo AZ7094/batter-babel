@@ -110,6 +110,59 @@ body {
   text-wrap: balance;
 }
 
+/* 标题行右侧：状态提示 + 语言开关。开关常驻，切换语言不丢当前结果。 */
+.top-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.top-right .hint { flex: 1 1 auto; min-width: 0; }
+
+.lang-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--panel);
+  color: var(--text-3);
+  font: 500 12.5px/1 var(--font);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.lang-toggle .lang-sep { color: #cfcfc6; font-weight: 400; }
+
+.lang-toggle .lang-zh,
+.lang-toggle .lang-en {
+  opacity: .42;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+html[data-lang="zh"] .lang-toggle .lang-zh,
+html[data-lang="en"] .lang-toggle .lang-en {
+  opacity: 1;
+  color: var(--text);
+  font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lang-toggle:hover { color: var(--text); border-color: #d5d5ca; background: #fbfbf7; }
+}
+
+.lang-toggle:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
 /* ── 操作区 ───────────────────────────────────────────── */
 .toolbar {
   display: flex;
@@ -621,6 +674,10 @@ select:disabled { opacity: 0.45; cursor: not-allowed; }
   .app { padding: 14px 16px 16px; gap: 10px; }
   .top { flex-direction: column; align-items: flex-start; gap: 4px; }
   .hint { text-align: left; font-size: 13px; }
+  /* 窄屏标题行折成两段：状态提示占满，语言开关跟在右侧同一行。 */
+  .top-right { width: 100%; justify-content: space-between; gap: 8px; }
+  .top-right .hint { flex: 1 1 auto; }
+  .lang-toggle { height: 26px; padding: 0 9px; font-size: 12px; }
   .mark { width: 34px; height: 34px; }
   .brand h1 { font-size: 24px; }
   .brand .sub { font-size: 14px; }

@@ -349,7 +349,7 @@ public partial class App : Application
         var evidenceDir = Path.GetFullPath(Value(args, "--evidence-dir")
             ?? Path.Combine(PageAssets.FindRepoRoot(pageRoot) ?? Environment.CurrentDirectory, "evidence", "dsh-p0"));
 
-        new WebShellWindow(pageRoot, evidenceDir, Has(args, "--web-check"), Has(args, "--web-shot"), Has(args, "--web-live"), Has(args, "--apply"), Value(args, "--game") ?? "limbus").Show();
+        new WebShellWindow(pageRoot, evidenceDir, Has(args, "--web-check"), Has(args, "--web-shot"), Has(args, "--web-live"), Has(args, "--apply"), Value(args, "--game") ?? "limbus", Has(args, "--web-i18n"), Value(args, "--lang") ?? "zh").Show();
     }
 
     private static string QosPolicyLine(QosResult result) =>

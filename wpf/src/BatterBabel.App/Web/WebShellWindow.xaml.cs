@@ -22,6 +22,8 @@ public partial class WebShellWindow : Window
     private readonly bool _checkMode;
     private readonly bool _shotMode;
     private readonly bool _liveShot;
+    private readonly bool _i18nMode;
+    private readonly string _lang;
     private readonly string _liveGame;
     private readonly bool _applyAfter;
     private readonly List<(string Name, bool Pass, string Detail)> _assertions = new();
@@ -30,7 +32,7 @@ public partial class WebShellWindow : Window
     private bool _started;
     private string? _bridgePath;
 
-    public WebShellWindow(string pageRoot, string evidenceDir, bool checkMode, bool shotMode = false, bool liveShot = false, bool applyAfter = false, string liveGame = "limbus")
+    public WebShellWindow(string pageRoot, string evidenceDir, bool checkMode, bool shotMode = false, bool liveShot = false, bool applyAfter = false, string liveGame = "limbus", bool i18nMode = false, string lang = "zh")
     {
         InitializeComponent();
         _pageRoot = pageRoot;
@@ -40,6 +42,8 @@ public partial class WebShellWindow : Window
         _liveShot = liveShot;
         _liveGame = liveGame;
         _applyAfter = applyAfter;
+        _i18nMode = i18nMode;
+        _lang = lang;
         Title = checkMode ? "Batter Babel · Web 壳自检" : "Batter Babel";
         Loaded += OnLoadedAsync;
     }
@@ -149,6 +153,7 @@ public partial class WebShellWindow : Window
             if (_checkMode) { await RunChecksAsync(); }
             else if (_shotMode) { await RunShotAsync(); }
             else if (_liveShot) { await RunLiveShotAsync(); }
+            else if (_i18nMode) { await RunI18nAsync(); }
         };
 
         // 页面是随包分发的静态资源，文件名不变（app.css/app.js/icon.png）。WebView2 默认
@@ -156,7 +161,7 @@ public partial class WebShellWindow : Window
         try { await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache); }
         catch (Exception ex) { Log($"cache-clear skipped: {ex.GetType().Name}"); }
 
-        core.Navigate("https://bb.local/index.html");
+        core.Navigate("https://bb.local/index.html" + (_lang == "en" ? "?lang=en" : ""));
     }
 
     // ---------------------------------------------------------------- 自检（真实页面 + 真实桥）
@@ -512,6 +517,53 @@ public partial class WebShellWindow : Window
         }
     }
 
+    private async Task RunI18nAsync()
+    {
+        try
+        {
+            var ready = await WaitForAsync("!!window.__TAURI__ && document.readyState === 'complete'", 20000, "page-ready");
+            Add("page-ready", ready, "页面已加载");
+            if (!ready) { return; }
+
+            var initial = await ReadStringAsync("document.documentElement.getAttribute('data-lang')||''");
+            var zhLabel = await ReadStringAsync("((document.getElementById('optimize')||{}).textContent||'').trim()");
+            var switched = await ReadStringAsync("(() => { var b=document.getElementById('lang'); if(!b) return 'no-toggle'; b.click(); return (document.documentElement.getAttribute('data-lang')||'')+'|'+(((document.getElementById('optimize')||{}).textContent)||'').trim(); })()");
+            var parts = switched.Split('|');
+            var langAfter = parts.Length > 0 ? parts[0] : "";
+            var labelAfter = parts.Length > 1 ? parts[1] : "";
+            Add("language-toggle", switched != "no-toggle" && langAfter.Length > 0 && langAfter != initial, $"initial={initial} after={langAfter}");
+            Add("labels-translated", labelAfter.Length > 0 && labelAfter != zhLabel, $"[{zhLabel}] -> [{labelAfter}]");
+
+            await Task.Delay(400);
+            var enShot = Path.Combine(_evidenceDir, "app-web-i18n-en.png");
+            await using (var stream = File.Create(enShot))
+            {
+                await View.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
+            }
+            Add("i18n-screenshot", new FileInfo(enShot).Length > 5000, $"{Path.GetFileName(enShot)} {new FileInfo(enShot).Length} B");
+            await File.WriteAllTextAsync(Path.Combine(_evidenceDir, "app-web-i18n-en-dom.txt"), await ReadStringAsync("document.body.innerText"));
+
+            var back = await ReadStringAsync("(() => { var b=document.getElementById('lang'); if(!b) return ''; b.click(); return (document.documentElement.getAttribute('data-lang')||'')+'|'+(((document.getElementById('optimize')||{}).textContent)||'').trim(); })()");
+            var backParts = back.Split('|');
+            Add("language-toggle-back", backParts.Length > 1 && backParts[0] == initial && backParts[1] == zhLabel, $"back={back}");
+            await Task.Delay(300);
+            var zhShot = Path.Combine(_evidenceDir, "app-web-i18n-zh.png");
+            await using (var stream = File.Create(zhShot))
+            {
+                await View.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
+            }
+            Add("i18n-screenshot-zh", new FileInfo(zhShot).Length > 5000, $"{Path.GetFileName(zhShot)} {new FileInfo(zhShot).Length} B");
+        }
+        catch (Exception ex)
+        {
+            Add("fatal", false, $"i18n 自检失败：{ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            FinishChecks();
+        }
+    }
+
     private void FinishChecks()
     {
         var pass = _assertions.Count > 0 && _assertions.All(a => a.Pass);
@@ -521,7 +573,7 @@ public partial class WebShellWindow : Window
             Log($"{(assertion.Pass ? "PASS" : "FAIL")} {assertion.Name} :: {assertion.Detail}");
         }
 
-        var banner = _liveShot ? "WEB_LIVE" : _shotMode ? "WEB_SHOT" : "WEB_CHECK";
+        var banner = _i18nMode ? "WEB_I18N" : _liveShot ? "WEB_LIVE" : _shotMode ? "WEB_SHOT" : "WEB_CHECK";
         Console.WriteLine(pass ? $"{banner} PASS" : $"{banner} FAIL");
         Log(pass ? $"{banner} PASS" : $"{banner} FAIL");
         Application.Current?.Shutdown(pass ? 0 : 1);

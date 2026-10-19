@@ -14,9 +14,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>BatterBabel</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
+    <FileVersion>1.0.1.0</FileVersion>
     <Product>Batter Babel</Product>
     <Company>Batter Babel</Company>
     <RootNamespace>BatterBabel.App</RootNamespace>

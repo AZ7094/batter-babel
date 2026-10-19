@@ -14,6 +14,7 @@ A Windows desktop tool that picks faster CDN / API routes for installed games, a
 - **Game acceleration**: raises the game process priority and applies a QoS DSCP policy per executable when the platform supports it.
 - **System tuning**: receive-window auto-tuning, RSS and related network settings with snapshot-first writes and one-click restore.
 - **Boot recovery**: re-applies hosts / QoS policies at sign-in so ActiveStore policies survive a reboot.
+- **Chinese / English UI**: one-click language switch in the header, remembered across launches.
 - **Logging and error handling**: every action is recorded in the in-app log, with readable failure reasons.
 
 ## Requirements
