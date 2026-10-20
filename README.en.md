@@ -84,7 +84,6 @@ tests/                      front-end contract tests
 - Per-target-IP QoS policies are rejected on this machine's Windows 10.0.26200 (the provider drops the match condition); the app detects this and refuses to write instead of pretending success.
 - Without a Group Policy QoS store, policies go to the active store and need the sign-in recovery task after a reboot.
 - Measurements depend on the public network and vary between runs; the UI shows the measured values of the current run.
-- The UI is currently Chinese only; an English UI is planned.
 
 ## License
 
